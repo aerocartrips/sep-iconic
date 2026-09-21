@@ -28,15 +28,19 @@ function firstRow(data) {
   return root || {};
 }
 
+function isYes(value) {
+  return value === true || value === "Y" || value === "y" || String(value).toLowerCase() === "true";
+}
+
+function isNo(value) {
+  return value === false || value === "N" || value === "n";
+}
+
 export function parseServiceability(data, pincode) {
   const row = firstRow(data);
-  const fm = row.fm_serviceable ?? row.serviceable ?? row.prepaid ?? data?.success;
-  const serviceable =
-    fm === true ||
-    fm === "Y" ||
-    fm === "y" ||
-    String(fm).toLowerCase() === "true" ||
-    (data?.success === true && fm !== false && fm !== "N");
+  // Rate/book always check a delivery pin — prefer last-mile when Delhivery sends it.
+  const flag = row.lm_serviceable ?? row.serviceable ?? row.prepaid ?? row.fm_serviceable ?? data?.success;
+  const serviceable = isYes(flag) || (data?.success === true && !isNo(flag));
   return {
     serviceable: Boolean(serviceable),
     pincode: String(row.pincode || pincode),

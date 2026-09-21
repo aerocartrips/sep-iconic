@@ -88,23 +88,55 @@ async function readBody(res) {
   }
 }
 
-export function pickMessage(data) {
-  if (!data || typeof data !== "object") return "";
-  const nested = data.errors || data.error;
-  const nestedMsg =
-    nested && typeof nested === "object"
-      ? Object.values(nested).flat?.().filter(Boolean)[0] || nested.message || ""
-      : "";
-  return String(
-    data.message ||
-      (typeof data.error === "string" ? data.error : "") ||
-      data.remarks ||
-      data.remark ||
-      data.detail ||
-      nestedMsg ||
-      (typeof data.raw === "string" ? data.raw.slice(0, 240) : "") ||
-      "",
-  );
+const MSG_KEYS = ["message", "msg", "detail", "details", "remarks", "remark", "reason", "description", "error_description"];
+const SKIP_KEYS = new Set(["status", "code", "status_code", "http_status", "error_code", "statusCode"]);
+
+function isHttpCode(value) {
+  return /^\d{3}$/.test(String(value).trim());
+}
+
+function pushMsg(out, value) {
+  const text = String(value || "").trim();
+  if (!text || isHttpCode(text) || text.length > 400) return;
+  if (!out.includes(text)) out.push(text);
+}
+
+/** Pull a human-readable Delhivery error; never return bare HTTP codes like "400". */
+export function pickMessage(data, depth = 0) {
+  if (data == null || depth > 5) return "";
+  if (typeof data === "string") return isHttpCode(data) ? "" : data.trim();
+  if (typeof data !== "object") return "";
+
+  const found = [];
+
+  if (Array.isArray(data)) {
+    for (const item of data) pushMsg(found, pickMessage(item, depth + 1));
+    return found[0] || "";
+  }
+
+  for (const key of MSG_KEYS) {
+    if (data[key] == null) continue;
+    const v = data[key];
+    if (typeof v === "string" || typeof v === "number") pushMsg(found, v);
+    else pushMsg(found, pickMessage(v, depth + 1));
+  }
+
+  for (const key of ["error", "errors"]) {
+    if (data[key] == null) continue;
+    pushMsg(found, pickMessage(data[key], depth + 1));
+  }
+
+  if (!found.length) {
+    for (const [key, v] of Object.entries(data)) {
+      if (SKIP_KEYS.has(key) || key === "raw" || v == null) continue;
+      if (typeof v === "string" || typeof v === "number") pushMsg(found, v);
+      else pushMsg(found, pickMessage(v, depth + 1));
+      if (found.length) break;
+    }
+  }
+
+  if (!found.length && typeof data.raw === "string") pushMsg(found, data.raw.slice(0, 240));
+  return found[0] || "";
 }
 
 export function isApiSuccess(result) {

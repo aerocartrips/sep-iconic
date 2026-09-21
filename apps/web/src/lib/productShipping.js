@@ -156,33 +156,42 @@ export function buildLineShippingMeta(product, variant) {
 }
 
 /**
- * Aggregate cart lines into a single package for Delhivery B2B rate check.
- * Combined weight = sum(unit_weight × qty). Package dims = max L/B and stacked H.
+ * Aggregate cart lines for Delhivery B2B: each unit is one box.
+ * Weight = Σ (unit_weight × qty). Dimensions grouped by L×B×H with matching box_count.
  */
 export function aggregatePackage(items) {
   let totalWeightGm = 0;
+  let boxCount = 0;
   let maxL = 0;
   let maxB = 0;
   let maxH = 0;
-  let missing = [];
+  const missing = [];
+  const groups = new Map();
 
   for (const item of items || []) {
-    const qty = Number(item.quantity) || 0;
+    const qty = Math.max(0, Math.round(Number(item.quantity) || 0));
+    if (!qty) continue;
     const meta = item.shipping || {};
     const w = Number(meta.weight_gm) || 0;
     const l = Number(meta.length_cm) || 0;
     const b = Number(meta.breadth_cm) || 0;
     const h = Number(meta.height_cm) || 0;
 
-    if (!w || w <= 0) missing.push(`${item.product?.title || 'Item'}: weight`);
+    if (w <= 0) missing.push(`${item.product?.title || 'Item'}: weight`);
     if (!l || !b || !h) missing.push(`${item.product?.title || 'Item'}: dimensions`);
 
-    // Combined shipment weight = Σ (unit weight × quantity)
     totalWeightGm += w * qty;
-    // Package outer dims = largest unit dims across the order
+    boxCount += qty;
     if (l > maxL) maxL = l;
     if (b > maxB) maxB = b;
     if (h > maxH) maxH = h;
+
+    if (l && b && h) {
+      const key = `${l}x${b}x${h}`;
+      const prev = groups.get(key);
+      if (prev) prev.box_count += qty;
+      else groups.set(key, { length_cm: l, width_cm: b, height_cm: h, box_count: qty });
+    }
   }
 
   return {
@@ -191,8 +200,9 @@ export function aggregatePackage(items) {
     package_length_cm: maxL || null,
     package_breadth_cm: maxB || null,
     package_height_cm: maxH || null,
+    box_count: Math.max(1, boxCount),
+    dimensions: [...groups.values()],
     missing,
-    // Weight alone is enough to rate-check; dims improve accuracy when present.
     ok: totalWeightGm > 0,
   };
 }

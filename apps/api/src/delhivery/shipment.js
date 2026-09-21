@@ -42,29 +42,41 @@ function round3(n) {
 
 export function packageFromItems(items) {
   let deadKg = 0;
-  let length = 0;
-  let breadth = 0;
-  let height = 0;
+  let boxCount = 0;
+  const groups = new Map();
 
   for (const it of items || []) {
-    const qty = num(it.quantity) || 1;
+    const qty = Math.max(0, Math.round(Number(it.quantity) || 0));
+    if (!qty) continue;
     const w = num(it.weight_gm || it.shipping?.weight_gm);
+    const length = num(it.length_cm || it.shipping?.length_cm);
+    const breadth = num(it.breadth_cm || it.shipping?.breadth_cm);
+    const height = num(it.height_cm || it.shipping?.height_cm);
     deadKg += (w / 1000) * qty;
-    length = Math.max(length, num(it.length_cm || it.shipping?.length_cm));
-    breadth = Math.max(breadth, num(it.breadth_cm || it.shipping?.breadth_cm));
-    height = Math.max(height, num(it.height_cm || it.shipping?.height_cm));
+    boxCount += qty;
+    if (length && breadth && height) {
+      const key = `${length}x${breadth}x${height}`;
+      const prev = groups.get(key);
+      if (prev) prev.box_count += qty;
+      else groups.set(key, { length_cm: length, width_cm: breadth, height_cm: height, box_count: qty });
+    }
   }
 
-  const volKg = length && breadth && height ? (length * breadth * height) / VOLUMETRIC_DIVISOR : 0;
-  const chargeable = Math.max(deadKg, volKg);
+  const dimensions = [...groups.values()];
+  const volKg = dimensions.reduce(
+    (sum, d) => sum + (d.length_cm * d.width_cm * d.height_cm * d.box_count) / VOLUMETRIC_DIVISOR,
+    0,
+  );
+  const primary = dimensions[0] || { length_cm: 0, width_cm: 0, height_cm: 0 };
 
   return {
     weight_kg: round3(deadKg),
-    chargeable_kg: round3(chargeable || deadKg),
-    length_cm: length,
-    breadth_cm: breadth,
-    height_cm: height,
-    box_count: 1,
+    chargeable_kg: round3(Math.max(deadKg, volKg) || deadKg),
+    length_cm: primary.length_cm,
+    breadth_cm: primary.width_cm,
+    height_cm: primary.height_cm,
+    box_count: Math.max(1, boxCount),
+    dimensions,
   };
 }
 
@@ -209,12 +221,19 @@ export function validateOrderForShipment(order) {
       if (!(num(it.weight_gm || it.shipping?.weight_gm) > 0)) {
         errors.push(`Item ${i + 1}: weight (gm) is required.`);
       }
+      if (
+        !(num(it.length_cm || it.shipping?.length_cm) > 0) ||
+        !(num(it.breadth_cm || it.shipping?.breadth_cm) > 0) ||
+        !(num(it.height_cm || it.shipping?.height_cm) > 0)
+      ) {
+        errors.push(`Item ${i + 1}: dimensions (cm) are required.`);
+      }
     });
   }
 
   const pkg = packageFromItems(items);
   if (!(pkg.weight_kg > 0)) errors.push("Shipment weight must be positive.");
-  if (!(pkg.length_cm && pkg.breadth_cm && pkg.height_cm)) {
+  if (!pkg.dimensions.length) {
     errors.push("Package length, breadth and height (cm) are required.");
   }
 
@@ -232,27 +251,41 @@ export function validateOrderForShipment(order) {
   return { ok: errors.length === 0, errors, pkg, amount };
 }
 
-export function buildQuotePayload({ pin, weightKg, invoiceValue, dimensions }) {
+export function normalizeBoxDimensions(input, fallbackBoxCount = 1) {
+  const fallback = Math.max(1, Math.round(Number(fallbackBoxCount)) || 1);
+  const list = Array.isArray(input) ? input : input ? [input] : [];
+  const out = [];
+  for (const d of list) {
+    if (!d || typeof d !== "object") continue;
+    const length = Number(d.length_cm ?? d.length) || 0;
+    const width = Number(d.width_cm ?? d.width ?? d.breadth_cm ?? d.breadth) || 0;
+    const height = Number(d.height_cm ?? d.height) || 0;
+    if (!(length && width && height)) continue;
+    const raw = Number(d.box_count ?? d.count);
+    const count =
+      Number.isFinite(raw) && raw > 0
+        ? Math.max(1, Math.round(raw))
+        : list.length === 1
+          ? fallback
+          : 1;
+    out.push({ length_cm: length, width_cm: width, height_cm: height, box_count: count });
+  }
+  return out;
+}
+
+export function buildQuotePayload({ pin, weightKg, invoiceValue, dimensions, boxCount }) {
   const payload = {
     weight_g: Math.round(Number(weightKg) * 1000),
     cheque_payment: false,
-    source_pin: PICKUP.pin_code,
-    consignee_pin: pin,
+    source_pin: Number(PICKUP.pin_code) || PICKUP.pin_code,
+    consignee_pin: Number(pin) || pin,
     payment_mode: "prepaid",
     inv_amount: invoiceValue || 0,
     freight_mode: "fop",
     rov_insurance: false,
   };
-  if (dimensions?.length && dimensions?.width && dimensions?.height) {
-    payload.dimensions = [
-      {
-        length_cm: dimensions.length,
-        width_cm: dimensions.width,
-        height_cm: dimensions.height,
-        box_count: 1,
-      },
-    ];
-  }
+  const boxes = normalizeBoxDimensions(dimensions, boxCount);
+  if (boxes.length) payload.dimensions = boxes;
   return payload;
 }
 
@@ -301,14 +334,16 @@ export function buildManifestPayload(order, pkg) {
         master: false,
       },
     ],
-    dimensions: [
-      {
-        length_cm: pkg.length_cm,
-        width_cm: pkg.breadth_cm,
-        height_cm: pkg.height_cm,
-        box_count: pkg.box_count,
-      },
-    ],
+    dimensions: pkg.dimensions?.length
+      ? pkg.dimensions
+      : [
+          {
+            length_cm: pkg.length_cm,
+            width_cm: pkg.breadth_cm,
+            height_cm: pkg.height_cm,
+            box_count: pkg.box_count || 1,
+          },
+        ],
     rov_insurance: false,
     fm_pickup: false,
   };

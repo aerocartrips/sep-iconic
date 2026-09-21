@@ -70,9 +70,12 @@ async function pushHistory(pb, order, entry) {
 }
 
 function failRate(res, status, error, reason, extra = {}) {
+  const text = sanitize(String(error || "").trim());
   return res.status(status === 200 ? 200 : status).json({
     calculable: false,
-    error,
+    error: !text || /^\d{3}$/.test(text)
+      ? "Unable to calculate shipping for this address. Please check your pincode."
+      : text,
     reason,
     pickup_pincode: PICKUP.pin_code,
     ...extra,
@@ -153,9 +156,15 @@ export async function getRate(req, res) {
 
   const orderValue = Number(body.total_order_value);
   const invoiceValue = Number.isFinite(orderValue) && orderValue > 0 ? orderValue : 0;
+  const boxCount = Math.max(1, Math.round(Number(body.box_count)) || 1);
   const pl = Number(body.package_length_cm) || 0;
   const pb = Number(body.package_breadth_cm) || 0;
   const ph = Number(body.package_height_cm) || 0;
+  const dimensions = Array.isArray(body.dimensions) && body.dimensions.length
+    ? body.dimensions
+    : pl && pb && ph
+      ? [{ length_cm: pl, width_cm: pb, height_cm: ph, box_count: boxCount }]
+      : null;
 
   try {
     const svc = await checkServiceability(deliveryPincode, weightKg);
@@ -166,23 +175,15 @@ export async function getRate(req, res) {
     }
 
     const result = await getFreightQuote(
-      buildQuotePayload({
-        pin: deliveryPincode,
-        weightKg,
-        invoiceValue,
-        dimensions: pl && pb && ph ? { length: pl, width: pb, height: ph } : null,
-      }),
+      buildQuotePayload({ pin: deliveryPincode, weightKg, invoiceValue, dimensions, boxCount }),
     );
 
     const quote = extractQuote(result.data);
     if (!isApiSuccess(result) || !(quote.total > 0)) {
-      return failRate(
-        res,
-        200,
-        sanitize(pickMessage(result.data) || "Unable to calculate shipping for this address. Please check your pincode."),
-        "unserviceable",
-        { delivery_pincode: deliveryPincode },
-      );
+      const msg =
+        sanitize(pickMessage(result.data)) ||
+        "Unable to calculate shipping for this address. Please check your pincode.";
+      return failRate(res, 200, msg, "quote_failed", { delivery_pincode: deliveryPincode });
     }
 
     const freightPaise = Math.round(quote.total * 100);
@@ -287,7 +288,7 @@ export async function createShipmentCore(pb, orderId) {
       delhivery_error: "",
     });
 
-    const svc = await checkServiceability(dropPin, payload.weight);
+    const svc = await checkServiceability(dropPin, v.pkg.weight_kg);
     if (!svc.serviceable) {
       const msg = "Delivery pincode is not serviceable for Delhivery B2B.";
       await persistFail(pb, order, { delhivery_request_status: "failed", delhivery_error: msg });

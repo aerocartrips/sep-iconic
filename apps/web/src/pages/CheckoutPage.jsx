@@ -121,6 +121,8 @@ const CheckoutPage = () => {
             package_length_cm: pkg.package_length_cm,
             package_breadth_cm: pkg.package_breadth_cm,
             package_height_cm: pkg.package_height_cm,
+            box_count: pkg.box_count,
+            dimensions: pkg.dimensions,
             cod: false,
           }),
         });
@@ -130,8 +132,9 @@ const CheckoutPage = () => {
         const data = await res.json().catch(() => ({}));
 
         if (!res.ok || data.calculable === false) {
+          const msg = String(data.error || '').trim();
           setShippingPaise(null);
-          setShippingError(data.error || RATE_ERROR_MSG);
+          setShippingError(/^\d{3}$/.test(msg) ? RATE_ERROR_MSG : (msg || RATE_ERROR_MSG));
           setShippingMeta(null);
         } else {
           // Accept 0 only when API explicitly confirms free shipping
@@ -174,6 +177,8 @@ const CheckoutPage = () => {
     pkg.package_length_cm,
     pkg.package_breadth_cm,
     pkg.package_height_cm,
+    pkg.box_count,
+    pkg.dimensions,
     pkg.ok,
     productAmount,
     items,
@@ -235,6 +240,8 @@ const CheckoutPage = () => {
             length_cm: pkg.package_length_cm,
             breadth_cm: pkg.package_breadth_cm,
             height_cm: pkg.package_height_cm,
+            box_count: pkg.box_count,
+            dimensions: pkg.dimensions,
           },
           items: items.map((i) => ({
             product_id: i.product.id,
@@ -476,7 +483,7 @@ const CheckoutPage = () => {
                     <span className="text-muted-foreground text-xs">Enter pincode</span>
                   )}
                   {!shippingLoading && pinComplete && shippingError && (
-                    <span className="text-destructive text-xs block max-w-[11rem]">{shippingError}</span>
+                    <span className="text-destructive text-xs block max-w-[16rem] leading-snug">{shippingError}</span>
                   )}
                   {!shippingLoading && shippingReady && formatINR(deliveryCharges)}
                 </span>
