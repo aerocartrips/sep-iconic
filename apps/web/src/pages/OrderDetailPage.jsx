@@ -3,6 +3,7 @@ import { Helmet } from 'react-helmet';
 import { useParams, Link } from 'react-router-dom';
 import { Loader2, ChevronLeft, Package, MapPin, CreditCard, CheckCircle2 } from 'lucide-react';
 import pb from '@/lib/pocketbaseClient';
+import apiServerClient from '@/lib/apiServerClient';
 
 const formatINR = (cents) => `\u20b9${((cents || 0) / 100).toFixed(2)}`;
 
@@ -21,6 +22,7 @@ const OrderDetailPage = () => {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [track, setTrack] = useState(null);
 
   useEffect(() => {
     pb.collection('orders')
@@ -29,6 +31,25 @@ const OrderDetailPage = () => {
       .catch((err) => setError(err.message || 'Order not found.'))
       .finally(() => setLoading(false));
   }, [orderId]);
+
+  useEffect(() => {
+    if (!order?.id || (!order.delhivery_lrn && !order.delhivery_awb)) return undefined;
+    let cancelled = false;
+    apiServerClient
+      .fetch('/delhivery/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: order.id }),
+      })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data?.success) setTrack(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [order?.id, order?.delhivery_lrn, order?.delhivery_awb]);
 
   if (loading) {
     return (
@@ -135,6 +156,28 @@ const OrderDetailPage = () => {
                 <div className="text-sm text-muted-foreground space-y-1">
                   <p>{order.shipping_address}</p>
                   <p>{order.shipping_city}, {order.shipping_state} — {order.shipping_pincode}</p>
+                  {(order.delhivery_lrn || order.delhivery_awb) && (
+                    <p className="pt-2">
+                      {order.delhivery_lrn && <span className="block">LRN: {order.delhivery_lrn}</span>}
+                      {(track?.status || order.delhivery_status) && (
+                        <span className="block">Status: {track?.status || order.delhivery_status}</span>
+                      )}
+                      {track?.location && <span className="block">Last scan: {track.location}</span>}
+                      {(order.delhivery_awb || order.delhivery_lrn) && (
+                        <a
+                          className="text-primary underline"
+                          href={
+                            track?.track_url ||
+                            `https://www.delhivery.com/track/package/${order.delhivery_awb || order.delhivery_lrn}`
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Track shipment {order.delhivery_awb || order.delhivery_lrn}
+                        </a>
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

@@ -13,8 +13,21 @@ const PACKAGING_DELHI_PAISE = 500; // ₹5 per piece within Delhi
 const PACKAGING_OUTSIDE_PAISE = 1500; // ₹15 per piece outside Delhi
 const RATE_ERROR_MSG =
   'Shipping rate could not be calculated. Please check your delivery pincode or try again.';
+const EWB_THRESHOLD_INR = 50000;
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i;
 
-const empty = { name: '', email: '', phone: '', address: '', city: '', state: '', pincode: '', gst: '', notes: '' };
+const empty = {
+  name: '',
+  email: '',
+  phone: '',
+  address: '',
+  city: '',
+  state: '',
+  pincode: '',
+  gst: '',
+  eway: '',
+  notes: '',
+};
 
 function loadRazorpayScript() {
   return new Promise((resolve) => {
@@ -46,7 +59,7 @@ const CheckoutPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Live RapidShyp shipping rate state
+  // Live Delhivery B2B shipping rate state
   const [shippingPaise, setShippingPaise] = useState(null); // null = not yet calculated
   const [shippingError, setShippingError] = useState('');
   const [shippingLoading, setShippingLoading] = useState(false);
@@ -95,7 +108,7 @@ const CheckoutPage = () => {
 
     const timer = setTimeout(async () => {
       try {
-        const res = await apiServerClient.fetch('/rapidshyp/rate', {
+        const res = await apiServerClient.fetch('/delhivery/rate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -184,6 +197,17 @@ const CheckoutPage = () => {
       setError(shippingError || RATE_ERROR_MSG);
       return;
     }
+    if (form.gst && !GSTIN_RE.test(form.gst.trim())) {
+      setError('Please enter a valid GSTIN or leave the GST field blank.');
+      return;
+    }
+    if (grandTotal / 100 > EWB_THRESHOLD_INR) {
+      const ewb = String(form.eway || '').replace(/\D/g, '');
+      if (!/^\d{12}$/.test(ewb)) {
+        setError('A 12-digit e-way bill is required for invoices above ₹50,000.');
+        return;
+      }
+    }
 
     setLoading(true);
     setError('');
@@ -203,7 +227,7 @@ const CheckoutPage = () => {
           delivery_charges_in_paise: deliveryCharges,
           total_quantity: totalQuantity,
           owner_id: isAuthed ? user?.id : '',
-          customer: form,
+          customer: { ...form, eway_bill: String(form.eway || '').replace(/\D/g, '') },
           shipping_meta: shippingMeta,
           package: {
             weight_gm: pkg.package_weight_gm,
@@ -220,7 +244,7 @@ const CheckoutPage = () => {
             price_in_cents: i.variant.price_in_cents,
             quantity: i.quantity,
             title: i.product.title,
-            // Pass real dims/weight through to order + RapidShyp shipment create
+            // Pass real dims/weight through to order + Delhivery shipment create
             weight_gm: i.shipping?.weight_gm || null,
             length_cm: i.shipping?.length_cm || null,
             breadth_cm: i.shipping?.breadth_cm || null,
@@ -343,6 +367,17 @@ const CheckoutPage = () => {
                 <input required type="email" className={field} placeholder="Email" value={form.email} onChange={set('email')} />
                 <input required className={field} placeholder="Phone Number" value={form.phone} onChange={set('phone')} />
                 <input className={field} placeholder="GST Number (optional)" value={form.gst} onChange={set('gst')} />
+                {grandTotal / 100 > EWB_THRESHOLD_INR && (
+                  <input
+                    required
+                    className={`${field} sm:col-span-2`}
+                    placeholder="E-way bill (12 digits, required above ₹50,000)"
+                    value={form.eway}
+                    onChange={set('eway')}
+                    inputMode="numeric"
+                    maxLength={12}
+                  />
+                )}
               </div>
             </div>
 

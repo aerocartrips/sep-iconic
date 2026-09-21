@@ -39,7 +39,7 @@ app.use(helmet());
 app.use(cors({
 	origin: process.env.CORS_ORIGIN || false, // deny cors when unset (on purpose)
 	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'QUERY'],
-	allowedHeaders: ['Authorization', 'Content-Type'],
+	allowedHeaders: ['Authorization', 'Content-Type', 'x-pb-token', 'x-pb-email'],
 }));
 app.use(morgan('combined'));
 app.use(globalRateLimit);

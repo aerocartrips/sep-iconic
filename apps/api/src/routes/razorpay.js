@@ -1,7 +1,7 @@
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import pocketbaseClient from '../utils/pocketbaseClient.js';
-import { createShipmentCore } from './rapidshyp.js';
+import { createShipmentCore } from './delhivery.js';
 import logger from '../utils/logger.js';
 
 const KEY_ID = process.env.RAZORPAY_KEY_ID;
@@ -109,6 +109,7 @@ export async function createOrder(req, res) {
     shipping_pincode: customer?.pincode || '',
     billing_address: customer?.address || '',
     gst_number: customer?.gst || '',
+    eway_bill: String(customer?.eway_bill || '').replace(/\D/g, '').slice(0, 12),
     order_notes: customer?.notes || '',
     product_amount_in_paise: totals.productAmountPaise,
     packaging_charges_in_paise: totals.packagingPaise,
@@ -197,17 +198,14 @@ export async function verifyPayment(req, res) {
     status: 'paid',
   });
 
-  // After a verified payment, automatically create the RapidShyp shipment so
-  // the order is booked with the courier (AWB/courier/tracking stored back on
-  // the order record). This is non-fatal: if RapidShyp fails, the order stays
-  // paid and the error is persisted on the order for admin diagnosis — the
-  // customer's payment confirmation is unaffected.
+  // After a verified payment, automatically create the Delhivery B2B shipment
+  // so the order is booked with the courier (LRN/AWB stored back on the order).
+  // This is non-fatal: if Delhivery fails, the order stays paid and the error
+  // is persisted on the order for admin diagnosis.
   try {
     await createShipmentCore(pb, existing.id);
   } catch (err) {
-    // createShipmentCore already persists errors on the order; never let a
-    // shipping failure fail the payment-verification response.
-    logger.error('RapidShyp auto-shipment failed for order', existing.id, err);
+    logger.error('Delhivery auto-shipment failed for order', existing.id, err);
   }
 
   res.json({

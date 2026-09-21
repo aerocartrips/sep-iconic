@@ -1,6 +1,6 @@
 /**
  * Helpers for reading product size/weight from Hostinger store data
- * and building shipment package info for RapidShyp rate checks.
+ * and building shipment package info for Delhivery B2B rate checks.
  *
  * Size/dimensions are stored as the variant title / SIZE option value
  * (e.g. "8*8*3", "10x10x4"). Weight comes from variant.weight when set.
@@ -142,13 +142,6 @@ export function buildLineShippingMeta(product, variant) {
     weight_gm = volumetricWeightGrams(cm);
     weight_source = weight_gm ? 'volumetric' : null;
   }
-  // Shipping-rate fallback only (never shown as product weight): a conservative
-  // per-unit package weight when neither dead weight nor dimensions are exposed
-  // by the storefront API, so a real courier rate can still be obtained.
-  if (!weight_gm) {
-    weight_gm = 300;
-    weight_source = 'default_package';
-  }
 
   return {
     length_cm: cm?.length_cm || null,
@@ -163,7 +156,7 @@ export function buildLineShippingMeta(product, variant) {
 }
 
 /**
- * Aggregate cart lines into a single package for RapidShyp rate check.
+ * Aggregate cart lines into a single package for Delhivery B2B rate check.
  * Combined weight = sum(unit_weight × qty). Package dims = max L/B and stacked H.
  */
 export function aggregatePackage(items) {
@@ -186,7 +179,7 @@ export function aggregatePackage(items) {
 
     // Combined shipment weight = Σ (unit weight × quantity)
     totalWeightGm += w * qty;
-    // Package outer dims = largest unit dims across the order (RapidShyp pattern)
+    // Package outer dims = largest unit dims across the order
     if (l > maxL) maxL = l;
     if (b > maxB) maxB = b;
     if (h > maxH) maxH = h;
