@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Vite
+.vite/
+
+# ESLint
+.eslintcache
+
+# PocketBase
+apps/pocketbase/pocketbase
+apps/pocketbase/pocketbase.exe
+apps/pocketbase/pb_data/**
+!apps/pocketbase/pb_data/types.d.ts
+apps/pocketbase/pb_snapshots/
+
+# Archives & local exports
+*.tar.gz
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors (local settings only)
+.idea/
+*.swp
+*.swo
+*~

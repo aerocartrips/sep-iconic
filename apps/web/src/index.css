@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Jost:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: "Jost", sans-serif;
+  overflow-x: clip;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.font-display {
+  font-family: "Cormorant Garamond", serif;
+}
+
+@layer base {
+  :root {
+    --background: 43 38% 95%;
+    --foreground: 133 23% 20%;
+    --card: 0 0% 100%;
+    --card-foreground: 133 23% 20%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 133 23% 20%;
+    --primary: 133 23% 27%;
+    --primary-foreground: 43 38% 97%;
+    --secondary: 43 30% 90%;
+    --secondary-foreground: 133 23% 27%;
+    --muted: 43 25% 90%;
+    --muted-foreground: 29 20% 40%;
+    --accent: 37 46% 60%;
+    --accent-foreground: 133 23% 20%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 37 20% 82%;
+    --input: 37 20% 82%;
+    --ring: 133 23% 27%;
+    --radius: 1rem;
+    --gold: 37 46% 60%;
+    --wood: 29 41% 39%;
+    --sage: 107 13% 53%;
+  }
+}
+
+@layer utilities {
+  .text-gold { color: hsl(var(--gold)); }
+  .bg-gold { background-color: hsl(var(--gold)); }
+  .text-wood { color: hsl(var(--wood)); }
+  .text-sage { color: hsl(var(--sage)); }
+  .border-gold { border-color: hsl(var(--gold)); }
+}
+
+html { scroll-behavior: smooth; }
+
+::selection { background: hsl(var(--accent)); color: hsl(var(--primary)); }
+
+.ken-burns {
+  animation: kenburns 8s ease-out forwards;
+}
+@keyframes kenburns {
+  from { transform: scale(1.05); }
+  to { transform: scale(1.18); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ken-burns { animation: none; }
+  html { scroll-behavior: auto; }
+}
