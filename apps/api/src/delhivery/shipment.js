@@ -3,6 +3,7 @@ import {
   PICKUP,
   SELLER_GSTIN,
   VOLUMETRIC_DIVISOR,
+  pinCode,
 } from "./config.js";
 
 const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i;
@@ -277,8 +278,8 @@ export function buildQuotePayload({ pin, weightKg, invoiceValue, dimensions, box
   const payload = {
     weight_g: Math.round(Number(weightKg) * 1000),
     cheque_payment: false,
-    source_pin: Number(PICKUP.pin_code) || PICKUP.pin_code,
-    consignee_pin: Number(pin) || pin,
+    source_pin: pinCode(PICKUP.pin_code),
+    consignee_pin: pinCode(pin),
     payment_mode: "prepaid",
     inv_amount: invoiceValue || 0,
     freight_mode: "fop",
@@ -313,7 +314,7 @@ export function buildManifestPayload(order, pkg) {
       address: (order.get("shipping_address") || "").trim(),
       city: (order.get("shipping_city") || "").trim(),
       state: (order.get("shipping_state") || "").trim(),
-      zip: (order.get("shipping_pincode") || "").replace(/\D/g, ""),
+      zip: pinCode(order.get("shipping_pincode")),
       email: order.get("customer_email") || "",
     },
     invoices: [

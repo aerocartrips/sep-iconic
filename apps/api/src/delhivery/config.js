@@ -9,7 +9,8 @@ function trimUrl(value, fallback) {
   return String(value || fallback || "").trim().replace(/\/+$/, "");
 }
 
-function digits(value, max) {
+/** Delhivery B2B pin fields are strings (Pydantic: str type expected). */
+export function pinCode(value, max = 6) {
   return String(value || "")
     .replace(/\D/g, "")
     .slice(0, max);
@@ -45,12 +46,12 @@ const PICKUP_NAME = (process.env.DELHIVERY_PICKUP_NAME || "").trim();
 export const PICKUP = {
   name: PICKUP_NAME,
   contact: (process.env.DELHIVERY_PICKUP_CONTACT || PICKUP_NAME).trim(),
-  pin_code: digits(process.env.DELHIVERY_PICKUP_PINCODE, 6),
+  pin_code: pinCode(process.env.DELHIVERY_PICKUP_PINCODE),
   city: (process.env.DELHIVERY_PICKUP_CITY || "").trim(),
   state: (process.env.DELHIVERY_PICKUP_STATE || "").trim(),
   country: (process.env.DELHIVERY_PICKUP_COUNTRY || "India").trim(),
   address: (process.env.DELHIVERY_PICKUP_ADDRESS || "").trim(),
-  phone: digits(process.env.DELHIVERY_PICKUP_PHONE, 10).slice(-10),
+  phone: pinCode(process.env.DELHIVERY_PICKUP_PHONE, 10).slice(-10),
   email: (process.env.DELHIVERY_PICKUP_EMAIL || "").trim(),
 };
 
