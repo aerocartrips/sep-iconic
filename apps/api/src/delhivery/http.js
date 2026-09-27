@@ -141,12 +141,28 @@ export function pickMessage(data, depth = 0) {
 
 export function isApiSuccess(result) {
   if (!result) return false;
+
   if (result.ok) return true;
-  const flag = result.data?.success ?? result.data?.status ?? result.data?.ok;
+
+  const flag =
+    result.data?.success ??
+    result.data?.status ??
+    result.data?.ok;
+
   if (flag === true) return true;
+
   const s = String(flag || "").toLowerCase();
+
   return s === "success" || s === "true" || s === "ok";
 }
+// export function isApiSuccess(result) {
+//   if (!result) return false;
+//   if (result.ok) return true;
+//   const flag = result.data?.success ?? result.data?.status ?? result.data?.ok;
+//   if (flag === true) return true;
+//   const s = String(flag || "").toLowerCase();
+//   return s === "success" || s === "true" || s === "ok";
+// }
 
 export async function delhiveryRequest(method, path, { json, form, query, timeout } = {}) {
   if (!isConfigured()) {

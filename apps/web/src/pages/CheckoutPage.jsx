@@ -65,6 +65,7 @@ const CheckoutPage = () => {
   const [shippingLoading, setShippingLoading] = useState(false);
   const [shippingMeta, setShippingMeta] = useState(null); // courier info from API
   const rateReqId = useRef(0);
+  const freightMode = process.env.FREIGHT_MODE || 'fod';
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -79,7 +80,8 @@ const CheckoutPage = () => {
   // deliveryCharges: only a real API rate (including explicit free = 0). Never default to 0.
   const deliveryCharges = shippingPaise == null ? 0 : shippingPaise;
   const shippingReady = shippingPaise != null && !shippingError;
-  const grandTotal = productAmount + packagingCharges + (shippingReady ? deliveryCharges : 0);
+  const grandTotal = freightMode !== 'fod' ?  productAmount + packagingCharges + (shippingReady ? deliveryCharges : 0) : productAmount + packagingCharges ;
+  // process.env.FREIGHT_MODE;
 
   // Recalculate shipping whenever pincode or cart package changes
   useEffect(() => {
@@ -229,7 +231,7 @@ const CheckoutPage = () => {
           amount_in_paise: grandTotal,
           product_amount_in_paise: productAmount,
           packaging_charges_in_paise: packagingCharges,
-          delivery_charges_in_paise: deliveryCharges,
+          delivery_charges_in_paise: freightMode !== 'fod' ? deliveryCharges : 0,
           total_quantity: totalQuantity,
           owner_id: isAuthed ? user?.id : '',
           customer: { ...form, eway_bill: String(form.eway || '').replace(/\D/g, '') },
@@ -479,15 +481,13 @@ const CheckoutPage = () => {
                       <Loader2 className="h-3.5 w-3.5 animate-spin" /> Calculating…
                     </span>
                   )}
-                  {!shippingLoading && !pinComplete && (
-                    <span className="text-muted-foreground text-xs">Enter pincode</span>
-                  )}
                   {!shippingLoading && pinComplete && shippingError && (
                     <span className="text-destructive text-xs block max-w-[16rem] leading-snug">{shippingError}</span>
                   )}
                   {!shippingLoading && shippingReady && formatINR(deliveryCharges)}
                 </span>
               </div>
+              {freightMode === 'fod' && <div className="text-xs text-red-500">Shipping charges will be collected at the time of delivery.</div>}
               <div className="flex justify-between text-lg text-primary font-medium pt-3 border-t border-border">
                 <span>Grand Total</span>
                 <span>{shippingReady ? formatINR(grandTotal) : '—'}</span>

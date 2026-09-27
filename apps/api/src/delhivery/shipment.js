@@ -115,31 +115,53 @@ export function extractShipmentIds(data) {
 }
 
 export function extractQuote(data) {
-  const root = flatten(data);
-  const quotes = Array.isArray(root.quotes) ? root.quotes[0] : root;
-  const src = quotes && typeof quotes === "object" ? quotes : root;
-  const listed = Number(
-    firstValue(src, [
-      "total_amount",
-      "totalAmount",
-      "total_freight",
-      "estimated_freight",
-      "estimated_amount",
-      "grand_total",
-    ]),
-  );
-  const summed =
-    Number(src.freight_charge || src.freight_charges || src.basic_freight || 0) +
-    Number(src.fuel_surcharge || src.fsc || 0) +
-    Number(src.gst || src.tax || src.tax_amount || 0);
-  const total = listed || summed;
+  const src =
+    data?.data && typeof data.data === "object"
+      ? data.data
+      : data && typeof data === "object"
+        ? data
+        : {};
+
+  const total = Number(src.total || 0);
+
   return {
     total: Number.isFinite(total) ? total : 0,
-    charged_weight: Number(src.charged_weight || src.chargeable_weight || src.weight || 0) || null,
-    edd: firstValue(src, ["edd", "estimated_delivery", "tat", "delivery_days"]) || null,
-    mode: src.mode || src.shipping_mode || "Surface",
+
+    charged_weight:
+      Number(src.charged_wt || 0) ||
+      null,
+
+    edd: null,
+
+    mode: "Surface",
   };
 }
+// export function extractQuote(data) {
+//   const root = flatten(data);
+//   const quotes = Array.isArray(root.quotes) ? root.quotes[0] : root;
+//   const src = quotes && typeof quotes === "object" ? quotes : root;
+//   const listed = Number(
+//     firstValue(src, [
+//       "total_amount",
+//       "totalAmount",
+//       "total_freight",
+//       "estimated_freight",
+//       "estimated_amount",
+//       "grand_total",
+//     ]),
+//   );
+//   const summed =
+//     Number(src.freight_charge || src.freight_charges || src.basic_freight || 0) +
+//     Number(src.fuel_surcharge || src.fsc || 0) +
+//     Number(src.gst || src.tax || src.tax_amount || 0);
+//   const total = listed || summed;
+//   return {
+//     total: Number.isFinite(total) ? total : 0,
+//     charged_weight: Number(src.charged_weight || src.chargeable_weight || src.weight || 0) || null,
+//     edd: firstValue(src, ["edd", "estimated_delivery", "tat", "delivery_days"]) || null,
+//     mode: src.mode || src.shipping_mode || "Surface",
+//   };
+// }
 
 export function extractTrack(data) {
   const src = flatten(data);
@@ -282,7 +304,7 @@ export function buildQuotePayload({ pin, weightKg, invoiceValue, dimensions, box
     consignee_pin: pinCode(pin),
     payment_mode: "prepaid",
     inv_amount: invoiceValue || 0,
-    freight_mode: "fop",
+    freight_mode: PICKUP.freight_mode,
     rov_insurance: false,
   };
   const boxes = normalizeBoxDimensions(dimensions, boxCount);

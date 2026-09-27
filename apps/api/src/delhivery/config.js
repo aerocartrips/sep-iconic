@@ -53,6 +53,7 @@ export const PICKUP = {
   address: (process.env.DELHIVERY_PICKUP_ADDRESS || "").trim(),
   phone: pinCode(process.env.DELHIVERY_PICKUP_PHONE, 10).slice(-10),
   email: (process.env.DELHIVERY_PICKUP_EMAIL || "").trim(),
+  freight_mode: (process.env.FREIGHT_MODE || "").trim(),
 };
 
 /** POST /client-warehouse/create/ */

@@ -177,7 +177,7 @@ export async function getRate(req, res) {
     const result = await getFreightQuote(
       buildQuotePayload({ pin: deliveryPincode, weightKg, invoiceValue, dimensions, boxCount }),
     );
-
+    
     const quote = extractQuote(result.data);
     if (!isApiSuccess(result) || !(quote.total > 0)) {
       const msg =
