@@ -6,6 +6,22 @@ import {
   pinCode,
 } from "./config.js";
 
+function getRecordValue(record, key, fallback = "") {
+  if (!record) return fallback;
+
+  try {
+    if (typeof record.get === "function") {
+      const value = record.get(key);
+      return value ?? fallback;
+    }
+
+    const value = record[key];
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i;
 const MOBILE = /^[6-9]\d{9}$/;
 const EWB = /^\d{12}$/;
@@ -25,7 +41,7 @@ const CANCELLABLE = new Set([
 
 export function orderItems(order) {
   try {
-    const items = JSON.parse(JSON.stringify(order.get("items_json") || [])) || [];
+    const items = JSON.parse(JSON.stringify(getRecordValue(order, "items_json", []) || [])) || [];
     return Array.isArray(items) ? items : [];
   } catch (_) {
     return [];
@@ -185,15 +201,15 @@ export function extractUrl(data, extraKeys = []) {
 }
 
 export function invoiceValueInr(order) {
-  return +((Number(order.get("amount_in_paise") || 0)) / 100).toFixed(2);
+  return +((Number(getRecordValue(order, "amount_in_paise", 0) || 0)) / 100).toFixed(2);
 }
 
 export function ewayBillOf(order) {
-  return String(order.get("eway_bill") || order.get("ewb") || "").replace(/\D/g, "");
+  return String(getRecordValue(order, "eway_bill", "") || getRecordValue(order, "ewb", "") || "").replace(/\D/g, "");
 }
 
 export function hasBookedLr(order) {
-  return Boolean(String(order.get("delhivery_lrn") || "").trim());
+  return Boolean(String(getRecordValue(order, "delhivery_lrn", "") || "").trim());
 }
 
 export function isCancellable(status) {
@@ -215,22 +231,22 @@ export function validatePickupLocation() {
 
 export function validateOrderForShipment(order) {
   const errors = [];
-  const name = (order.get("customer_name") || "").trim();
+  const name = (getRecordValue(order, "customer_name", "") || "").trim();
   if (name.length < 3) errors.push("Customer name is required (min 3 chars).");
 
-  const phone = (order.get("customer_phone") || "").replace(/\D/g, "").slice(-10);
+  const phone = (getRecordValue(order, "customer_phone", "") || "").replace(/\D/g, "").slice(-10);
   if (!MOBILE.test(phone)) errors.push("A valid 10-digit mobile (starting 6-9) is required.");
 
-  const address = (order.get("shipping_address") || "").trim();
+  const address = (getRecordValue(order, "shipping_address", "") || "").trim();
   if (address.length < 3) errors.push("Shipping address is required.");
 
-  const city = (order.get("shipping_city") || "").trim();
+  const city = (getRecordValue(order, "shipping_city", "") || "").trim();
   if (!city) errors.push("Shipping city is required.");
 
-  const state = (order.get("shipping_state") || "").trim();
+  const state = (getRecordValue(order, "shipping_state", "") || "").trim();
   if (!state) errors.push("Shipping state is required.");
 
-  const pincode = (order.get("shipping_pincode") || "").replace(/\D/g, "");
+  const pincode = (getRecordValue(order, "shipping_pincode", "") || "").replace(/\D/g, "");
   if (!/^\d{6}$/.test(pincode)) errors.push("A valid 6-digit pincode is required.");
 
   const amount = invoiceValueInr(order);
@@ -263,7 +279,7 @@ export function validateOrderForShipment(order) {
   if (SELLER_GSTIN && !GSTIN.test(SELLER_GSTIN)) {
     errors.push("DELHIVERY_SELLER_GSTIN must be a valid GSTIN when set.");
   }
-  const consigneeGst = (order.get("gst_number") || "").trim();
+  const consigneeGst = (getRecordValue(order, "gst_number", "") || "").trim();
   if (consigneeGst && !GSTIN.test(consigneeGst)) errors.push("Consignee GSTIN is invalid.");
 
   if (amount > EWB_THRESHOLD_INR && !EWB.test(ewayBillOf(order))) {
@@ -314,7 +330,7 @@ export function buildQuotePayload({ pin, weightKg, invoiceValue, dimensions, box
 
 export function buildManifestPayload(order, pkg) {
   const items = orderItems(order);
-  const ident = String(order.get("order_number") || order.id);
+  const ident = String(getRecordValue(order, "order_number", "") || order.id);
   const invoiceValue = invoiceValueInr(order);
   const ewb = ewayBillOf(order);
   const description =
@@ -331,13 +347,13 @@ export function buildManifestPayload(order, pkg) {
     payment_mode: "prepaid",
     weight: weightGm,
     dropoff_location: {
-      consignee_name: (order.get("customer_name") || "").trim(),
-      phone: (order.get("customer_phone") || "").replace(/\D/g, "").slice(-10),
-      address: (order.get("shipping_address") || "").trim(),
-      city: (order.get("shipping_city") || "").trim(),
-      state: (order.get("shipping_state") || "").trim(),
-      zip: pinCode(order.get("shipping_pincode")),
-      email: order.get("customer_email") || "",
+      consignee_name: (getRecordValue(order, "customer_name", "") || "").trim(),
+      phone: (getRecordValue(order, "customer_phone", "") || "").replace(/\D/g, "").slice(-10),
+      address: (getRecordValue(order, "shipping_address", "") || "").trim(),
+      city: (getRecordValue(order, "shipping_city", "") || "").trim(),
+      state: (getRecordValue(order, "shipping_state", "") || "").trim(),
+      zip: pinCode(getRecordValue(order, "shipping_pincode", "")),
+      email: getRecordValue(order, "customer_email", "") || "",
     },
     invoices: [
       {

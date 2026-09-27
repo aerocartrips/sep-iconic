@@ -48,6 +48,22 @@ import {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function getRecordValue(record, key, fallback = "") {
+  if (!record) return fallback;
+
+  try {
+    if (typeof record.get === "function") {
+      const value = record.get(key);
+      return value ?? fallback;
+    }
+
+    const value = record[key];
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function findOrder(pb, orderId) {
   if (!orderId) return null;
   try {
@@ -60,7 +76,7 @@ async function findOrder(pb, orderId) {
 async function pushHistory(pb, order, entry) {
   let history = [];
   try {
-    const raw = order.get("delhivery_history");
+    const raw = getRecordValue(order, "delhivery_history");
     if (raw) history = JSON.parse(JSON.stringify(raw)) || [];
   } catch (_) {}
   if (!Array.isArray(history)) history = [];
@@ -220,7 +236,7 @@ export async function createShipmentCore(pb, orderId) {
   const order = await findOrder(pb, orderId);
   if (!order) return { ok: false, status: 404, error: "Website order not found." };
 
-  const statusVal = String(order.get("status") || "");
+  const statusVal = String(getRecordValue(order, "status", "") || "");
   if (!["paid", "processing", "shipped"].includes(statusVal)) {
     return { ok: false, status: 422, error: "A shipment can only be created for a paid order." };
   }
@@ -230,10 +246,10 @@ export async function createShipmentCore(pb, orderId) {
       ok: true,
       alreadyExists: true,
       order_id: order.id,
-      delhivery_job_id: order.get("delhivery_job_id") || "",
-      delhivery_lrn: order.get("delhivery_lrn") || "",
-      delhivery_awb: order.get("delhivery_awb") || "",
-      delhivery_status: order.get("delhivery_status") || "",
+      delhivery_job_id: getRecordValue(order, "delhivery_job_id", "") || "",
+      delhivery_lrn: getRecordValue(order, "delhivery_lrn", "") || "",
+      delhivery_awb: getRecordValue(order, "delhivery_awb", "") || "",
+      delhivery_status: getRecordValue(order, "delhivery_status", "") || "",
     };
   }
 
@@ -241,8 +257,8 @@ export async function createShipmentCore(pb, orderId) {
     return { ok: false, status: 503, error: "DELHIVERY_USERNAME and DELHIVERY_PASSWORD are required to create an LR." };
   }
 
-  const pendingJob = String(order.get("delhivery_job_id") || "").trim();
-  if (pendingJob && String(order.get("delhivery_request_status") || "") === "pending_lrn") {
+  const pendingJob = String(getRecordValue(order, "delhivery_job_id", "") || "").trim();
+  if (pendingJob && String(getRecordValue(order, "delhivery_request_status", "") || "") === "pending_lrn") {
     try {
       const polled = await fetchManifestJob(pendingJob);
       const ids = extractShipmentIds(polled.data);
@@ -262,8 +278,8 @@ export async function createShipmentCore(pb, orderId) {
     } catch (_) {}
   }
 
-  if (String(order.get("delhivery_request_status") || "") === "creating") {
-    const started = Date.parse(order.get("delhivery_created_at") || "") || 0;
+  if (String(getRecordValue(order, "delhivery_request_status", "") || "") === "creating") {
+    const started = Date.parse(getRecordValue(order, "delhivery_created_at", "") || "") || 0;
     if (Date.now() - started < 120_000) {
       return { ok: false, status: 409, error: "Shipment create is already in progress." };
     }
@@ -278,7 +294,7 @@ export async function createShipmentCore(pb, orderId) {
     return { ok: false, status: 422, error: "Order is missing required shipping data.", details: v.errors };
   }
 
-  const dropPin = (order.get("shipping_pincode") || "").replace(/\D/g, "");
+  const dropPin = (getRecordValue(order, "shipping_pincode", "") || "").replace(/\D/g, "");
   const payload = buildManifestPayload(order, v.pkg);
 
   try {
@@ -359,7 +375,7 @@ export async function getLabel(req, res) {
   const pb = pocketbaseClient;
   const order = await findOrder(pb, order_id);
   if (!order) return res.status(404).json({ error: "Website order not found." });
-  const lrn = order.get("delhivery_lrn");
+  const lrn = getRecordValue(order, "delhivery_lrn", "");
   if (!lrn) return res.status(422).json({ error: "No LRN exists for this order." });
 
   try {
@@ -447,12 +463,12 @@ export async function cancelShipment(req, res) {
   const order = await findOrder(pb, order_id);
   if (!order) return res.status(404).json({ error: "Website order not found." });
 
-  const lrn = order.get("delhivery_lrn");
+  const lrn = getRecordValue(order, "delhivery_lrn", "");
   if (!lrn) return res.status(422).json({ error: "No LRN exists for this order." });
 
-  const curStatus = String(order.get("delhivery_status") || "").toLowerCase();
+  const curStatus = String(getRecordValue(order, "delhivery_status", "") || "").toLowerCase();
   if (curStatus === "cancelled" || curStatus === "canceled") {
-    return res.json({ alreadyCancelled: true, delhivery_status: order.get("delhivery_status") });
+    return res.json({ alreadyCancelled: true, delhivery_status: getRecordValue(order, "delhivery_status", "") });
   }
   if (!isCancellable(curStatus)) {
     return res.status(422).json({ error: "This shipment can only be cancelled while it is still manifested." });
@@ -484,7 +500,7 @@ export async function trackOrder(req, res) {
   const access = await requireOrderAccess(req, order);
   if (!access.ok) return res.status(access.status).json({ error: access.error });
 
-  const lrn = order.get("delhivery_lrn");
+  const lrn = getRecordValue(order, "delhivery_lrn", "");
   if (!lrn) return res.status(422).json({ error: "No LRN exists for this order." });
 
   try {
@@ -499,8 +515,8 @@ export async function trackOrder(req, res) {
     return res.json({
       success: true,
       lrn,
-      awb: order.get("delhivery_awb") || "",
-      status: track.status || order.get("delhivery_status") || "",
+      awb: getRecordValue(order, "delhivery_awb", "") || "",
+      status: track.status || getRecordValue(order, "delhivery_status", "") || "",
       location: track.location,
       scanned_at: track.scanned_at,
       track_url: `https://www.delhivery.com/track/package/${lrn}`,
@@ -520,7 +536,7 @@ export async function getPod(req, res) {
   const pb = pocketbaseClient;
   const order = await findOrder(pb, order_id);
   if (!order) return res.status(404).json({ error: "Website order not found." });
-  const lrn = order.get("delhivery_lrn");
+  const lrn = getRecordValue(order, "delhivery_lrn", "");
   if (!lrn) return res.status(422).json({ error: "No LRN exists for this order." });
 
   try {

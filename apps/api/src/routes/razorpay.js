@@ -17,6 +17,12 @@ function getRazorpay() {
   return new Razorpay({ key_id: KEY_ID, key_secret: KEY_SECRET });
 }
 
+function getRecordValue(record, key, fallback = '') {
+  if (!record) return fallback;
+  if (typeof record.get === 'function') return record.get(key);
+  return record[key] ?? fallback;
+}
+
 function generateOrderNumber() {
   const d = new Date();
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -202,8 +208,8 @@ export async function verifyPayment(req, res) {
   }
 
   const existing = records[0];
-  const existingStatus = String(existing.get('status') || '');
-  const existingPaymentId = String(existing.get('razorpay_payment_id') || '');
+  const existingStatus = String(getRecordValue(existing, 'status', ''));
+  const existingPaymentId = String(getRecordValue(existing, 'razorpay_payment_id', ''));
 
   // IDEMPOTENCY: if this order is already verified as paid, just return success.
   // A repeated callback / page refresh must not create a duplicate or overwrite.
@@ -211,7 +217,7 @@ export async function verifyPayment(req, res) {
     return res.json({
       success: true,
       order_id: razorpay_order_id,
-      order_number: existing.get('order_number') || '',
+      order_number: getRecordValue(existing, 'order_number', ''),
       payment_id: razorpay_payment_id,
       already_verified: true,
     });
@@ -244,7 +250,7 @@ export async function verifyPayment(req, res) {
   res.json({
     success: true,
     order_id: razorpay_order_id,
-    order_number: orderRecord.get('order_number') || '',
+    order_number: getRecordValue(orderRecord, 'order_number', ''),
     payment_id: razorpay_payment_id,
   });
 }
