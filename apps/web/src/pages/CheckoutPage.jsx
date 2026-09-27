@@ -9,7 +9,7 @@ import apiServerClient from '@/lib/apiServerClient';
 import { aggregatePackage } from '@/lib/productShipping';
 
 const formatINR = (cents) => `\u20b9${((cents || 0) / 100).toFixed(2)}`;
-const PACKAGING_DELHI_PAISE = 500; // ₹5 per piece within Delhi
+const PACKAGING_DELHI_PAISE = 0; // ₹5 per piece within Delhi 0 for test
 const PACKAGING_OUTSIDE_PAISE = 1500; // ₹15 per piece outside Delhi
 const RATE_ERROR_MSG =
   'Shipping rate could not be calculated. Please check your delivery pincode or try again.';
@@ -65,7 +65,7 @@ const CheckoutPage = () => {
   const [shippingLoading, setShippingLoading] = useState(false);
   const [shippingMeta, setShippingMeta] = useState(null); // courier info from API
   const rateReqId = useRef(0);
-  const freightMode = process.env.FREIGHT_MODE || 'fod';
+  const freightMode = 'fod';
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 

@@ -9,7 +9,7 @@ const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
 // ---- Business rules (enforced server-side, cannot be bypassed by the client) ----
 const MOQ = 100; // Minimum Order Quantity per product line
-const PACKAGING_DELHI_PAISE = 500; // ₹5 per piece within Delhi
+const PACKAGING_DELHI_PAISE = 0; // ₹5 per piece within Delhi 0 for test
 const PACKAGING_OUTSIDE_PAISE = 1500; // ₹15 per piece outside Delhi
 
 function getRazorpay() {
@@ -156,8 +156,33 @@ export async function verifyPayment(req, res) {
       if (records.length > 0) {
         await pb.collection('orders').update(records[0].id, { status: 'failed' });
       }
-    } catch (_) {}
+    } catch (err) {
+      logger.error('Failed to mark order failed after signature mismatch', { razorpay_order_id, err: err.message });
+    return res.status(400).json({ error: 'Payment signature verification failed',err });
+
+    }
+    logger.warn('Payment signature verification failed', { razorpay_order_id });
     return res.status(400).json({ error: 'Payment signature verification failed' });
+  }
+
+  // Fetch the payment from Razorpay to validate status and order linkage
+  let payment;
+  try {
+    const rz = getRazorpay();
+    payment = await rz.payments.fetch(razorpay_payment_id);
+  } catch (err) {
+    logger.error('Razorpay payment fetch failed', { razorpay_payment_id, err: err?.message || err });
+    return res.status(500).json({ error: 'Could not verify payment with Razorpay',err });
+  }
+
+  if (String(payment?.status) !== 'captured') {
+    logger.warn('Payment not captured', { razorpay_payment_id, status: payment?.status });
+    return res.status(400).json({ error: 'Payment not captured', status: payment?.status });
+  }
+
+  if (String(payment?.order_id) !== String(razorpay_order_id)) {
+    logger.warn('Payment order_id mismatch', { razorpay_payment_id, payment_order_id: payment?.order_id });
+    return res.status(400).json({ error: 'Order id mismatch', payment_order_id: payment?.order_id });
   }
 
   // Find the pending order by its Razorpay order id.
@@ -166,8 +191,9 @@ export async function verifyPayment(req, res) {
     records = await pb.collection('orders').getFullList({
       filter: `razorpay_order_id = "${razorpay_order_id}"`,
     });
-  } catch (_) {
+  } catch (e) {
     records = [];
+    return res.json({ error: 'razorpay_order_id',e })
   }
 
   if (records.length === 0) {
@@ -192,11 +218,17 @@ export async function verifyPayment(req, res) {
   }
 
   // Mark the order as paid with the verified payment id + signature.
-  const orderRecord = await pb.collection('orders').update(existing.id, {
-    razorpay_payment_id,
-    razorpay_signature,
-    status: 'paid',
-  });
+  let orderRecord;
+  try {
+    orderRecord = await pb.collection('orders').update(existing.id, {
+      razorpay_payment_id,
+      razorpay_signature,
+      status: 'paid',
+    });
+  } catch (err) {
+    logger.error('PocketBase order update failed', { id: existing.id, message: err?.message || err });
+    return res.status(500).json({ error: 'PocketBase update failed', detail: String(err?.message || err) });
+  }
 
   // After a verified payment, automatically create the Delhivery B2B shipment
   // so the order is booked with the courier (LRN/AWB stored back on the order).
@@ -206,6 +238,7 @@ export async function verifyPayment(req, res) {
     await createShipmentCore(pb, existing.id);
   } catch (err) {
     logger.error('Delhivery auto-shipment failed for order', existing.id, err);
+    return res.status(500).json({ error: 'Delhivery auto-shipment failed for order', detail: String(err?.message || err) });
   }
 
   res.json({
