@@ -1,10 +1,23 @@
 import {
   EWB_THRESHOLD_INR,
   PICKUP,
+  SELLER,
   SELLER_GSTIN,
+  SELLER_PAN,
   VOLUMETRIC_DIVISOR,
   pinCode,
 } from "./config.js";
+
+/**
+ * Delhivery B2B/LTL shipment helpers.
+ *
+ * Important:
+ * - pickup_location_name = registered Delhivery warehouse
+ * - dropoff_location = customer / consignee
+ * - billing_address = seller / consignor billing identity
+ * - shipment_details = JS array internally; buildManifestForm()
+ *   serializes it to JSON because /manifest is multipart/form-data.
+ */
 
 function getRecordValue(record, key, fallback = "") {
   if (!record) return fallback;
@@ -25,6 +38,9 @@ function getRecordValue(record, key, fallback = "") {
 const GSTIN =
   /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i;
 
+const PAN =
+  /^[A-Z]{5}[0-9]{4}[A-Z]$/i;
+
 const MOBILE = /^[6-9]\d{9}$/;
 const EWB = /^\d{12}$/;
 
@@ -42,6 +58,10 @@ const CANCELLABLE = new Set([
   "scheduled",
 ]);
 
+/* -------------------------------------------------------------------------- */
+/* ORDER HELPERS                                                              */
+/* -------------------------------------------------------------------------- */
+
 export function orderItems(order) {
   try {
     const items = JSON.parse(
@@ -51,22 +71,26 @@ export function orderItems(order) {
     ) || [];
 
     return Array.isArray(items) ? items : [];
-  } catch (_) {
+  } catch {
     return [];
   }
 }
 
-function num(v) {
-  const n = Number(v);
+function num(value) {
+  const n = Number(value);
 
   return Number.isFinite(n) && n > 0
     ? n
     : 0;
 }
 
-function round3(n) {
-  return +Number(n).toFixed(3);
+function round3(value) {
+  return +Number(value).toFixed(3);
 }
+
+/* -------------------------------------------------------------------------- */
+/* PACKAGE CALCULATION                                                        */
+/* -------------------------------------------------------------------------- */
 
 export function packageFromItems(items) {
   let deadKg = 0;
@@ -74,45 +98,56 @@ export function packageFromItems(items) {
 
   const groups = new Map();
 
-  for (const it of items || []) {
+  for (const item of items || []) {
     const qty = Math.max(
       0,
-      Math.round(Number(it.quantity) || 0),
+      Math.round(Number(item.quantity) || 0),
     );
 
     if (!qty) continue;
 
-    const w = num(
-      it.weight_gm ||
-      it.shipping?.weight_gm,
+    const weightGm = num(
+      item.weight_gm ||
+      item.shipping?.weight_gm,
     );
 
     const length = num(
-      it.length_cm ||
-      it.shipping?.length_cm,
+      item.length_cm ||
+      item.shipping?.length_cm,
     );
 
     const breadth = num(
-      it.breadth_cm ||
-      it.shipping?.breadth_cm,
+      item.breadth_cm ||
+      item.shipping?.breadth_cm,
     );
 
     const height = num(
-      it.height_cm ||
-      it.shipping?.height_cm,
+      item.height_cm ||
+      item.shipping?.height_cm,
     );
 
-    deadKg += (w / 1000) * qty;
+    deadKg +=
+      (weightGm / 1000) * qty;
+
     boxCount += qty;
 
-    if (length && breadth && height) {
+    /*
+     * Keep dimensions grouped.
+     * Example:
+     * 3x3x3 x 100 pieces
+     */
+    if (
+      length &&
+      breadth &&
+      height
+    ) {
       const key =
         `${length}x${breadth}x${height}`;
 
-      const prev = groups.get(key);
+      const previous = groups.get(key);
 
-      if (prev) {
-        prev.box_count += qty;
+      if (previous) {
+        previous.box_count += qty;
       } else {
         groups.set(key, {
           length_cm: length,
@@ -124,20 +159,28 @@ export function packageFromItems(items) {
     }
   }
 
-  const dimensions = [...groups.values()];
+  const dimensions = [
+    ...groups.values(),
+  ];
 
-  const volKg = dimensions.reduce(
-    (sum, d) =>
-      sum +
-      (
-        d.length_cm *
-        d.width_cm *
-        d.height_cm *
-        d.box_count
-      ) /
-        VOLUMETRIC_DIVISOR,
-    0,
-  );
+  /*
+   * Volumetric weight:
+   *
+   * L x W x H x box_count / 5000
+   */
+  const volumetricKg =
+    dimensions.reduce(
+      (sum, dimension) =>
+        sum +
+        (
+          dimension.length_cm *
+          dimension.width_cm *
+          dimension.height_cm *
+          dimension.box_count
+        ) /
+          VOLUMETRIC_DIVISOR,
+      0,
+    );
 
   const primary =
     dimensions[0] || {
@@ -148,30 +191,50 @@ export function packageFromItems(items) {
 
   return {
     weight_kg: round3(deadKg),
+
     chargeable_kg: round3(
-      Math.max(deadKg, volKg) || deadKg,
+      Math.max(
+        deadKg,
+        volumetricKg,
+      ) || deadKg,
     ),
-    length_cm: primary.length_cm,
-    breadth_cm: primary.width_cm,
-    height_cm: primary.height_cm,
-    box_count: Math.max(1, boxCount),
+
+    length_cm:
+      primary.length_cm,
+
+    breadth_cm:
+      primary.width_cm,
+
+    height_cm:
+      primary.height_cm,
+
+    box_count:
+      Math.max(1, boxCount),
+
     dimensions,
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* GENERIC RESPONSE HELPERS                                                   */
+/* -------------------------------------------------------------------------- */
+
 function firstValue(obj, keys) {
-  if (!obj || typeof obj !== "object") {
+  if (
+    !obj ||
+    typeof obj !== "object"
+  ) {
     return "";
   }
 
-  for (const k of keys) {
-    const v = obj[k];
+  for (const key of keys) {
+    const value = obj[key];
 
     if (
-      v != null &&
-      String(v).trim() !== ""
+      value != null &&
+      String(value).trim() !== ""
     ) {
-      return v;
+      return value;
     }
   }
 
@@ -179,15 +242,23 @@ function firstValue(obj, keys) {
 }
 
 function flatten(data) {
-  if (!data || typeof data !== "object") {
+  if (
+    !data ||
+    typeof data !== "object"
+  ) {
     return {};
   }
 
   const root =
     data.data &&
     typeof data.data === "object"
-      ? { ...data, ...data.data }
-      : { ...data };
+      ? {
+          ...data,
+          ...data.data,
+        }
+      : {
+          ...data,
+        };
 
   const nested =
     root.job ||
@@ -196,25 +267,31 @@ function flatten(data) {
     root.payload ||
     {};
 
-  const list = Array.isArray(root.packages)
-    ? root.packages[0]
-    : Array.isArray(root.shipments)
-      ? root.shipments[0]
-      : nested;
+  const list =
+    Array.isArray(root.packages)
+      ? root.packages[0]
+      : Array.isArray(root.shipments)
+        ? root.shipments[0]
+        : nested;
 
   return {
     ...root,
-    ...(list && typeof list === "object"
+    ...(list &&
+    typeof list === "object"
       ? list
       : {}),
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* SHIPMENT RESPONSE PARSING                                                  */
+/* -------------------------------------------------------------------------- */
+
 export function extractShipmentIds(data) {
-  const src = flatten(data);
+  const source = flatten(data);
 
   const awbRaw = firstValue(
-    src,
+    source,
     [
       "master_waybill",
       "master_awb",
@@ -227,7 +304,7 @@ export function extractShipmentIds(data) {
   return {
     job_id: String(
       firstValue(
-        src,
+        source,
         [
           "job_id",
           "jobId",
@@ -240,7 +317,7 @@ export function extractShipmentIds(data) {
 
     lrn: String(
       firstValue(
-        src,
+        source,
         [
           "lrn",
           "lrnum",
@@ -258,7 +335,7 @@ export function extractShipmentIds(data) {
 
     status: String(
       firstValue(
-        src,
+        source,
         [
           "status",
           "shipment_status",
@@ -269,7 +346,7 @@ export function extractShipmentIds(data) {
 
     label: String(
       firstValue(
-        src,
+        source,
         [
           "label_url",
           "packing_slip",
@@ -283,7 +360,7 @@ export function extractShipmentIds(data) {
 }
 
 export function extractQuote(data) {
-  const src =
+  const source =
     data?.data &&
     typeof data.data === "object"
       ? data.data
@@ -292,16 +369,20 @@ export function extractQuote(data) {
         ? data
         : {};
 
-  const total = Number(src.total || 0);
+  const total = Number(
+    source.total || 0,
+  );
 
   return {
-    total: Number.isFinite(total)
-      ? total
-      : 0,
+    total:
+      Number.isFinite(total)
+        ? total
+        : 0,
 
     charged_weight:
-      Number(src.charged_wt || 0) ||
-      null,
+      Number(
+        source.charged_wt || 0,
+      ) || null,
 
     edd: null,
 
@@ -310,13 +391,13 @@ export function extractQuote(data) {
 }
 
 export function extractTrack(data) {
-  const src = flatten(data);
+  const source = flatten(data);
 
   const statusObj =
-    src.Status &&
-    typeof src.Status === "object"
-      ? src.Status
-      : src;
+    source.Status &&
+    typeof source.Status === "object"
+      ? source.Status
+      : source;
 
   return {
     status: String(
@@ -354,7 +435,7 @@ export function extractTrack(data) {
 
     lrn: String(
       firstValue(
-        src,
+        source,
         [
           "lrn",
           "LRN",
@@ -369,16 +450,21 @@ export function extractUrl(
   data,
   extraKeys = [],
 ) {
-  const src = flatten(data);
+  const source = flatten(data);
 
   const list =
-    src.urls ||
-    src.links ||
-    (Array.isArray(src.data)
-      ? src.data
-      : null);
+    source.urls ||
+    source.links ||
+    (
+      Array.isArray(source.data)
+        ? source.data
+        : null
+    );
 
-  if (Array.isArray(list) && list[0]) {
+  if (
+    Array.isArray(list) &&
+    list[0]
+  ) {
     const first = list[0];
 
     return String(
@@ -392,7 +478,7 @@ export function extractUrl(
 
   return String(
     firstValue(
-      src,
+      source,
       [
         "label_url",
         "pdf_url",
@@ -405,6 +491,10 @@ export function extractUrl(
     ) || "",
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* ORDER VALUE / EWAY BILL                                                    */
+/* -------------------------------------------------------------------------- */
 
 export function invoiceValueInr(order) {
   return +(
@@ -450,9 +540,119 @@ export function hasBookedLr(order) {
 
 export function isCancellable(status) {
   return CANCELLABLE.has(
-    String(status || "").toLowerCase(),
+    String(status || "")
+      .toLowerCase(),
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* SELLER / BILLING VALIDATION                                                */
+/* -------------------------------------------------------------------------- */
+
+export function validateSellerBillingAddress() {
+  const errors = [];
+
+  if (
+    !SELLER.name ||
+    SELLER.name.length < 2
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_NAME is required.",
+    );
+  }
+
+  if (
+    !SELLER.company ||
+    SELLER.company.length < 2
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_COMPANY is required.",
+    );
+  }
+
+  if (
+    !SELLER.address ||
+    SELLER.address.length < 5
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_ADDRESS is required.",
+    );
+  }
+
+  if (!SELLER.city) {
+    errors.push(
+      "DELHIVERY_SELLER_CITY is required.",
+    );
+  }
+
+  if (!SELLER.state) {
+    errors.push(
+      "DELHIVERY_SELLER_STATE is required.",
+    );
+  }
+
+  if (
+    !/^\d{6}$/.test(
+      SELLER.pin_code,
+    )
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_PINCODE must be a valid 6-digit pincode.",
+    );
+  }
+
+  if (
+    !MOBILE.test(SELLER.phone)
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_PHONE must be a valid 10-digit mobile.",
+    );
+  }
+
+  /*
+   * Delhivery requires either:
+   * - valid PAN
+   * OR
+   * - valid GSTIN
+   *
+   * Do not send empty strings for these fields.
+   */
+  const hasGst =
+    Boolean(SELLER_GSTIN);
+
+  const hasPan =
+    Boolean(SELLER_PAN);
+
+  if (!hasGst && !hasPan) {
+    errors.push(
+      "For FoD/FoP, seller PAN or GSTIN is required in billing_address.",
+    );
+  }
+
+  if (
+    hasGst &&
+    !GSTIN.test(SELLER_GSTIN)
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_GSTIN is invalid.",
+    );
+  }
+
+  if (
+    hasPan &&
+    !PAN.test(SELLER_PAN)
+  ) {
+    errors.push(
+      "DELHIVERY_SELLER_PAN is invalid.",
+    );
+  }
+
+  return errors;
+}
+
+/* -------------------------------------------------------------------------- */
+/* PICKUP VALIDATION                                                          */
+/* -------------------------------------------------------------------------- */
 
 export function validatePickupLocation() {
   const errors = [];
@@ -464,7 +664,9 @@ export function validatePickupLocation() {
   }
 
   if (
-    !/^\d{6}$/.test(PICKUP.pin_code)
+    !/^\d{6}$/.test(
+      PICKUP.pin_code,
+    )
   ) {
     errors.push(
       "DELHIVERY_PICKUP_PINCODE must be a valid 6-digit pincode.",
@@ -492,7 +694,9 @@ export function validatePickupLocation() {
     );
   }
 
-  if (!MOBILE.test(PICKUP.phone)) {
+  if (
+    !MOBILE.test(PICKUP.phone)
+  ) {
     errors.push(
       "DELHIVERY_PICKUP_PHONE must be a valid 10-digit mobile.",
     );
@@ -500,6 +704,10 @@ export function validatePickupLocation() {
 
   return errors;
 }
+
+/* -------------------------------------------------------------------------- */
+/* ORDER VALIDATION                                                           */
+/* -------------------------------------------------------------------------- */
 
 export function validateOrderForShipment(order) {
   const errors = [];
@@ -530,7 +738,7 @@ export function validateOrderForShipment(order) {
 
   if (!MOBILE.test(phone)) {
     errors.push(
-      "A valid 10-digit mobile (starting 6-9) is required.",
+      "A valid 10-digit customer mobile is required.",
     );
   }
 
@@ -586,11 +794,12 @@ export function validateOrderForShipment(order) {
 
   if (!/^\d{6}$/.test(pincode)) {
     errors.push(
-      "A valid 6-digit pincode is required.",
+      "A valid 6-digit customer pincode is required.",
     );
   }
 
-  const amount = invoiceValueInr(order);
+  const amount =
+    invoiceValueInr(order);
 
   if (!(amount > 0)) {
     errors.push(
@@ -598,61 +807,73 @@ export function validateOrderForShipment(order) {
     );
   }
 
-  const items = orderItems(order);
+  const items =
+    orderItems(order);
 
   if (!items.length) {
     errors.push(
       "Order has no item lines.",
     );
   } else {
-    items.forEach((it, i) => {
-      if (!(num(it.quantity) > 0)) {
-        errors.push(
-          `Item ${i + 1}: quantity must be positive.`,
-        );
-      }
+    items.forEach(
+      (item, index) => {
+        const itemNumber =
+          index + 1;
 
-      if (
-        !(
-          num(
-            it.weight_gm ||
-              it.shipping?.weight_gm,
-          ) > 0
-        )
-      ) {
-        errors.push(
-          `Item ${i + 1}: weight (gm) is required.`,
-        );
-      }
+        if (
+          !(num(item.quantity) > 0)
+        ) {
+          errors.push(
+            `Item ${itemNumber}: quantity must be positive.`,
+          );
+        }
 
-      if (
-        !(
+        if (
+          !(
+            num(
+              item.weight_gm ||
+                item.shipping?.weight_gm,
+            ) > 0
+          )
+        ) {
+          errors.push(
+            `Item ${itemNumber}: weight (gm) is required.`,
+          );
+        }
+
+        const length =
           num(
-            it.length_cm ||
-              it.shipping?.length_cm,
-          ) > 0
-        ) ||
-        !(
+            item.length_cm ||
+              item.shipping?.length_cm,
+          );
+
+        const breadth =
           num(
-            it.breadth_cm ||
-              it.shipping?.breadth_cm,
-          ) > 0
-        ) ||
-        !(
+            item.breadth_cm ||
+              item.shipping?.breadth_cm,
+          );
+
+        const height =
           num(
-            it.height_cm ||
-              it.shipping?.height_cm,
-          ) > 0
-        )
-      ) {
-        errors.push(
-          `Item ${i + 1}: dimensions (cm) are required.`,
-        );
-      }
-    });
+            item.height_cm ||
+              item.shipping?.height_cm,
+          );
+
+        if (
+          !(length > 0) ||
+          !(breadth > 0) ||
+          !(height > 0)
+        ) {
+          errors.push(
+            `Item ${itemNumber}: dimensions (cm) are required.`,
+          );
+        }
+      },
+    );
   }
 
-  const pkg = packageFromItems(items);
+  const pkg =
+    packageFromItems(items);
 
   if (!(pkg.weight_kg > 0)) {
     errors.push(
@@ -660,18 +881,31 @@ export function validateOrderForShipment(order) {
     );
   }
 
-  if (!pkg.dimensions.length) {
+  if (
+    !pkg.dimensions.length
+  ) {
     errors.push(
       "Package length, breadth and height (cm) are required.",
     );
   }
 
+  /*
+   * Seller billing identity is mandatory
+   * for FoD / FoP.
+   */
+  const freightMode =
+    String(
+      PICKUP.freight_mode || "",
+    )
+      .trim()
+      .toLowerCase();
+
   if (
-    SELLER_GSTIN &&
-    !GSTIN.test(SELLER_GSTIN)
+    freightMode === "fod" ||
+    freightMode === "fop"
   ) {
     errors.push(
-      "DELHIVERY_SELLER_GSTIN must be a valid GSTIN when set.",
+      ...validateSellerBillingAddress(),
     );
   }
 
@@ -692,12 +926,20 @@ export function validateOrderForShipment(order) {
     );
   }
 
+  /*
+   * E-way bill requirement for
+   * invoice values above threshold.
+   */
   if (
     amount > EWB_THRESHOLD_INR &&
-    !EWB.test(ewayBillOf(order))
+    !EWB.test(
+      ewayBillOf(order),
+    )
   ) {
     errors.push(
-      `E-way bill (12 digits) is required for invoices above ₹${EWB_THRESHOLD_INR.toLocaleString("en-IN")}.`,
+      `E-way bill (12 digits) is required for invoices above ₹${EWB_THRESHOLD_INR.toLocaleString(
+        "en-IN",
+      )}.`,
     );
   }
 
@@ -713,73 +955,87 @@ export function validateOrderForShipment(order) {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* DIMENSIONS                                                                 */
+/* -------------------------------------------------------------------------- */
+
 export function normalizeBoxDimensions(
   input,
   fallbackBoxCount = 1,
 ) {
-  const fallback = Math.max(
-    1,
-    Math.round(
-      Number(fallbackBoxCount),
-    ) || 1,
-  );
+  const fallback =
+    Math.max(
+      1,
+      Math.round(
+        Number(
+          fallbackBoxCount,
+        ),
+      ) || 1,
+    );
 
-  const list = Array.isArray(input)
-    ? input
-    : input
-      ? [input]
-      : [];
+  const list =
+    Array.isArray(input)
+      ? input
+      : input
+        ? [input]
+        : [];
 
-  const out = [];
+  const output = [];
 
-  for (const d of list) {
+  for (const dimension of list) {
     if (
-      !d ||
-      typeof d !== "object"
+      !dimension ||
+      typeof dimension !== "object"
     ) {
       continue;
     }
 
     const length =
       Number(
-        d.length_cm ?? d.length,
+        dimension.length_cm ??
+          dimension.length,
       ) || 0;
 
     const width =
       Number(
-        d.width_cm ??
-          d.width ??
-          d.breadth_cm ??
-          d.breadth,
+        dimension.width_cm ??
+          dimension.width ??
+          dimension.breadth_cm ??
+          dimension.breadth,
       ) || 0;
 
     const height =
       Number(
-        d.height_cm ?? d.height,
+        dimension.height_cm ??
+          dimension.height,
       ) || 0;
 
     if (
-      !(length && width && height)
+      !(length > 0) ||
+      !(width > 0) ||
+      !(height > 0)
     ) {
       continue;
     }
 
-    const raw = Number(
-      d.box_count ?? d.count,
-    );
+    const rawCount =
+      Number(
+        dimension.box_count ??
+          dimension.count,
+      );
 
     const count =
-      Number.isFinite(raw) &&
-      raw > 0
+      Number.isFinite(rawCount) &&
+      rawCount > 0
         ? Math.max(
             1,
-            Math.round(raw),
+            Math.round(rawCount),
           )
         : list.length === 1
           ? fallback
           : 1;
 
-    out.push({
+    output.push({
       length_cm: length,
       width_cm: width,
       height_cm: height,
@@ -787,8 +1043,12 @@ export function normalizeBoxDimensions(
     });
   }
 
-  return out;
+  return output;
 }
+
+/* -------------------------------------------------------------------------- */
+/* QUOTE PAYLOAD                                                              */
+/* -------------------------------------------------------------------------- */
 
 export function buildQuotePayload({
   pin,
@@ -810,6 +1070,10 @@ export function buildQuotePayload({
 
     consignee_pin: pinCode(pin),
 
+    /*
+     * Customer product payment is prepaid
+     * in current checkout flow.
+     */
     payment_mode: "prepaid",
 
     inv_amount:
@@ -828,17 +1092,54 @@ export function buildQuotePayload({
     );
 
   if (boxes.length) {
-    payload.dimensions = boxes;
+    payload.dimensions =
+      boxes;
   }
 
   return payload;
 }
 
-export function buildManifestForm(fields = {}) {
+/* -------------------------------------------------------------------------- */
+/* MANIFEST FORM                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Delhivery /manifest expects multipart/form-data.
+ *
+ * Important:
+ *
+ * shipment_details must NOT be appended as:
+ *
+ *   form.append("shipment_details", array)
+ *
+ * Instead:
+ *
+ *   form.append(
+ *     "shipment_details",
+ *     JSON.stringify(array)
+ *   )
+ *
+ * Same applies to nested objects/arrays:
+ * dropoff_location
+ * invoices
+ * shipment_details
+ * dimensions
+ * billing_address
+ */
+export function buildManifestForm(
+  fields = {},
+) {
   const form = new FormData();
 
-  for (const [key, value] of Object.entries(fields || {})) {
-    if (value === undefined || value === null) {
+  for (
+    const [key, value] of Object.entries(
+      fields || {},
+    )
+  ) {
+    if (
+      value === undefined ||
+      value === null
+    ) {
       continue;
     }
 
@@ -847,21 +1148,77 @@ export function buildManifestForm(fields = {}) {
       typeof value === "number" ||
       typeof value === "boolean"
     ) {
-      form.append(key, String(value));
+      form.append(
+        key,
+        String(value),
+      );
+
       continue;
     }
 
-    form.append(key, JSON.stringify(value));
+    form.append(
+      key,
+      JSON.stringify(value),
+    );
   }
 
   return form;
 }
 
+/* -------------------------------------------------------------------------- */
+/* SELLER BILLING ADDRESS                                                    */
+/* -------------------------------------------------------------------------- */
+
+function buildBillingAddress() {
+  const billingAddress = {
+    name: SELLER.name,
+    company: SELLER.company,
+    consignor: SELLER.name,
+    address: SELLER.address,
+    city: SELLER.city,
+    state: SELLER.state,
+    pin: String(
+      SELLER.pin_code || "",
+    ),
+    phone: String(
+      SELLER.phone || "",
+    ),
+  };
+
+  /*
+   * Delhivery requires either PAN
+   * or GSTIN.
+   *
+   * IMPORTANT:
+   * Never send:
+   *
+   * pan_number: ""
+   * gst_number: ""
+   *
+   * because Delhivery validates empty
+   * values against regex and rejects them.
+   */
+  if (SELLER_GSTIN) {
+    billingAddress.gst_number =
+      SELLER_GSTIN;
+  } else if (SELLER_PAN) {
+    billingAddress.pan_number =
+      SELLER_PAN;
+  }
+
+  return billingAddress;
+}
+
+/* -------------------------------------------------------------------------- */
+/* MANIFEST PAYLOAD                                                           */
+/* -------------------------------------------------------------------------- */
+
 export function buildManifestPayload(
   order,
   pkg,
 ) {
-  const items = orderItems(order);
+  const items =
+    orderItems(order);
 
   const ident = String(
     getRecordValue(
@@ -869,19 +1226,20 @@ export function buildManifestPayload(
       "order_number",
       "",
     ) || order.id,
-  );
+  ).trim();
 
   const invoiceValue =
     invoiceValueInr(order);
 
-  const ewb = ewayBillOf(order);
+  const ewb =
+    ewayBillOf(order);
 
   const description =
     items
       .map(
-        (it) =>
-          it.title ||
-          it.product_title ||
+        (item) =>
+          item.title ||
+          item.product_title ||
           "Product",
       )
       .filter(Boolean)
@@ -890,69 +1248,65 @@ export function buildManifestPayload(
       .slice(0, 200) ||
     "Handicraft goods";
 
-  const weightGm = Math.round(
-    pkg.weight_kg * 1000,
-  );
-
-  const paymentMode = String(
-    getRecordValue(
-      order,
-      "payment_mode",
-      getRecordValue(
-        order,
-        "payment_method",
-        "prepaid",
-      ),
-    ) || "prepaid",
-  )
-    .trim()
-    .toLowerCase();
-
-  const codAmount = Number(
-    getRecordValue(
-      order,
-      "cod_amount",
-      invoiceValue,
-    ) ?? invoiceValue,
-  );
-
-  const freightMode = String(
-    PICKUP.freight_mode || "fop",
-  )
-    .trim()
-    .toLowerCase() || "fop";
-
-  const billingAddress = {
-    name: PICKUP.contact || PICKUP.name || "Delhivery",
-    company: PICKUP.name || "Delhivery",
-    consignor: PICKUP.name || "Delhivery",
-    address: PICKUP.address || "",
-    city: PICKUP.city || "",
-    state: PICKUP.state || "",
-    pin:
-      PICKUP.pin_code ||
-      pinCode(
-        getRecordValue(
-          order,
-          "shipping_pincode",
-          "",
-        ),
-      ) ||
-      "",
-    phone: PICKUP.phone || "",
-    pan_number: "",
-    gst_number: SELLER_GSTIN || "",
-  };
+  const weightGm =
+    Math.round(
+      Number(
+        pkg.weight_kg,
+      ) * 1000,
+    );
 
   /*
-   * Internal/canonical dimensions remain:
+   * Product payment mode.
+   *
+   * Existing application flow uses
+   * Razorpay prepaid payment.
+   */
+  const paymentMode =
+    String(
+      getRecordValue(
+        order,
+        "payment_mode",
+        getRecordValue(
+          order,
+          "payment_method",
+          "prepaid",
+        ),
+      ) || "prepaid",
+    )
+      .trim()
+      .toLowerCase();
+
+  const codAmount =
+    Number(
+      getRecordValue(
+        order,
+        "cod_amount",
+        invoiceValue,
+      ) ?? invoiceValue,
+    );
+
+  /*
+   * Freight payment mode is independent
+   * from payment_mode.
+   *
+   * Current .env:
+   *
+   * FREIGHT_MODE=fod
+   */
+  const freightMode =
+    String(
+      PICKUP.freight_mode || "",
+    )
+      .trim()
+      .toLowerCase();
+
+  /*
+   * Internal dimensions:
    *
    * length_cm
    * width_cm
    * height_cm
    * box_count
-   *
-   * This is required by the /rate flow.
    */
   const dimensions =
     normalizeBoxDimensions(
@@ -962,10 +1316,13 @@ export function buildManifestPayload(
             {
               length_cm:
                 pkg.length_cm,
+
               width_cm:
                 pkg.breadth_cm,
+
               height_cm:
                 pkg.height_cm,
+
               box_count:
                 pkg.box_count || 1,
             },
@@ -974,7 +1331,7 @@ export function buildManifestPayload(
     );
 
   /*
-   * Manifest API expects:
+   * Manifest dimensions:
    *
    * length
    * width
@@ -982,27 +1339,65 @@ export function buildManifestPayload(
    * box_count
    */
   const manifestDimensions =
-    dimensions.map((d) => ({
-      length: d.length_cm,
-      width: d.width_cm,
-      height: d.height_cm,
-      box_count: d.box_count,
-    }));
+    dimensions.map(
+      (dimension) => ({
+        length:
+          dimension.length_cm,
+
+        width:
+          dimension.width_cm,
+
+        height:
+          dimension.height_cm,
+
+        box_count:
+          dimension.box_count,
+      }),
+    );
+
+  /*
+   * SELLER / CONSIGNOR BILLING ADDRESS
+   *
+   * NOT customer address.
+   */
+  const billingAddress =
+    buildBillingAddress();
 
   return {
+    /*
+     * Registered Delhivery warehouse
+     */
     pickup_location_name:
       PICKUP.name,
 
-    payment_mode: paymentMode,
+    /*
+     * Customer payment mode
+     */
+    payment_mode:
+      paymentMode,
 
+    /*
+     * COD amount only for COD orders.
+     */
     ...(paymentMode === "cod"
       ? {
-          cod_amount: codAmount || invoiceValue || '0',
+          cod_amount:
+            codAmount ||
+            invoiceValue ||
+            "0",
         }
-      : {cod_amount: '0'}),
+      : {
+          cod_amount: "0",
+        }),
 
+    /*
+     * Total dead weight in grams.
+     */
     weight: weightGm,
 
+    /*
+     * CUSTOMER / CONSIGNEE
+     */
     dropoff_location: {
       consignee_name: (
         getRecordValue(
@@ -1062,42 +1457,91 @@ export function buildManifestPayload(
         ) || "",
     },
 
+    /*
+     * INVOICE
+     */
     invoices: [
       {
-        ewaybill: ewb || "",
-        inv_num: ident,
-        inv_amt: invoiceValue,
-        inv_qr_code: "",
-      },
-    ],
+        ewaybill:
+          ewb || "",
 
-    shipment_details: [
-      {
-        order_id: ident,
-        box_count: pkg.box_count,
-        description,
-        weight: weightGm,
-        waybills: [],
-        master: 'False',
+        inv_num:
+          ident,
+
+        inv_amt:
+          invoiceValue,
+
+        inv_qr_code:
+          "",
       },
     ],
 
     /*
-     * IMPORTANT:
-     * Use manifestDimensions here.
-     * Do NOT use the internal `dimensions` variable.
+     * SHIPMENT DETAILS
+     *
+     * Keep this as an ARRAY here.
+     *
+     * buildManifestForm() converts it
+     * to JSON string for multipart/form-data.
      */
-    dimensions: manifestDimensions,
+    shipment_details: [
+      {
+        order_id:
+          ident,
 
-    rov_insurance: 'False',
+        box_count:
+          pkg.box_count,
 
-    freight_mode: freightMode,
+        description,
 
-    billing_address: billingAddress,
+        weight:
+          weightGm,
 
-    fm_pickup: 'False',
+        waybills: [],
+
+        /*
+         * Delhivery example uses boolean-like
+         * string in multipart payload.
+         */
+        master: "False",
+      },
+    ],
+
+    /*
+     * MANIFEST DIMENSIONS
+     */
+    dimensions:
+      manifestDimensions,
+
+    /*
+     * ROV insurance.
+     */
+    rov_insurance: "False",
+
+    /*
+     * Freight payment mode:
+     *
+     * fod / fop
+     */
+    freight_mode:
+      freightMode,
+
+    /*
+     * SELLER BILLING ADDRESS
+     */
+    billing_address:
+      billingAddress,
+
+    /*
+     * Pickup scheduling flag.
+     */
+    fm_pickup: "False",
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* PICKUP PAYLOAD                                                             */
+/* -------------------------------------------------------------------------- */
 
 export function buildPickupPayload(
   _order,
@@ -1108,15 +1552,28 @@ export function buildPickupPayload(
   },
 ) {
   return {
-    client_warehouse: PICKUP.name,
-    pickup_date: date,
-    start_time: slot,
+    client_warehouse:
+      PICKUP.name,
+
+    pickup_date:
+      date,
+
+    start_time:
+      slot,
+
     expected_package_count:
       boxCount,
   };
 }
 
-/** Same-day B2B pickup must be raised before 14:00 IST. */
+/* -------------------------------------------------------------------------- */
+/* PICKUP DATE VALIDATION                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Same-day B2B pickup must be requested
+ * before 14:00 IST.
+ */
 export function assertPickupSchedule(
   date,
 ) {
@@ -1125,16 +1582,28 @@ export function assertPickupSchedule(
       date || "",
     )
   ) {
-    return "date must be YYYY-MM-DD.";
+    return (
+      "date must be YYYY-MM-DD."
+    );
   }
 
-  const [y, m, d] =
-    date.split("-").map(Number);
+  const [
+    year,
+    month,
+    day,
+  ] =
+    date
+      .split("-")
+      .map(Number);
 
-  const istNow = new Date(
-    Date.now() +
-      330 * 60 * 1000,
-  );
+  /*
+   * Convert current time to IST.
+   */
+  const istNow =
+    new Date(
+      Date.now() +
+        330 * 60 * 1000,
+    );
 
   const today =
     `${istNow.getUTCFullYear()}-${String(
@@ -1143,27 +1612,39 @@ export function assertPickupSchedule(
       istNow.getUTCDate(),
     ).padStart(2, "0")}`;
 
-  const chosen = new Date(
-    Date.UTC(y, m - 1, d),
-  );
+  const chosen =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day,
+      ),
+    );
 
-  const startToday = new Date(
-    Date.UTC(
-      istNow.getUTCFullYear(),
-      istNow.getUTCMonth(),
-      istNow.getUTCDate(),
-    ),
-  );
+  const startToday =
+    new Date(
+      Date.UTC(
+        istNow.getUTCFullYear(),
+        istNow.getUTCMonth(),
+        istNow.getUTCDate(),
+      ),
+    );
 
-  if (chosen < startToday) {
-    return "Pickup date cannot be in the past.";
+  if (
+    chosen < startToday
+  ) {
+    return (
+      "Pickup date cannot be in the past."
+    );
   }
 
   if (
     date === today &&
     istNow.getUTCHours() >= 14
   ) {
-    return "Same-day pickup must be requested before 2:00 PM IST.";
+    return (
+      "Same-day pickup must be requested before 2:00 PM IST."
+    );
   }
 
   return "";
