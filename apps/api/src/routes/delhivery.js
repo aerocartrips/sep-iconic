@@ -760,7 +760,13 @@ export async function createShipmentCore(
             "Delhivery B2B",
         };
       }
-    } catch (_) {}
+    } catch (err) {
+     return {
+        ok: false,
+        status: 500,
+        error: err,
+      }
+    }
   }
 
   if (
@@ -1627,7 +1633,7 @@ export async function trackOrder(
   }
 
   const pb =
-    pocketBaseClient;
+    pocketbaseClient;
 
   const order =
     await findOrder(
@@ -1783,7 +1789,7 @@ export async function getPod(
   }
 
   const pb =
-    pocketBaseClient;
+    pocketbaseClient;
 
   const order =
     await findOrder(

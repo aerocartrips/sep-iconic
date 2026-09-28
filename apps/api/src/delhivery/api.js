@@ -1,4 +1,5 @@
 import { TIMEOUT_MS } from "./config.js";
+import { buildManifestForm } from "./shipment.js";
 import { delhiveryRequest, isApiSuccess } from "./http.js";
 
 const serviceabilityCache = new Map();
@@ -194,7 +195,7 @@ export function manifestShipment(payload) {
     "POST",
     "/manifest",
     {
-      form: toForm(payload),
+      form: buildManifestForm(payload),
       timeout: TIMEOUT_MS.manifest,
     },
   );

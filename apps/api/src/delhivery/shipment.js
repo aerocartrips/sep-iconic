@@ -834,6 +834,29 @@ export function buildQuotePayload({
   return payload;
 }
 
+export function buildManifestForm(fields = {}) {
+  const form = new FormData();
+
+  for (const [key, value] of Object.entries(fields || {})) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      form.append(key, String(value));
+      continue;
+    }
+
+    form.append(key, JSON.stringify(value));
+  }
+
+  return form;
+}
+
 export function buildManifestPayload(
   order,
   pkg,
@@ -870,6 +893,56 @@ export function buildManifestPayload(
   const weightGm = Math.round(
     pkg.weight_kg * 1000,
   );
+
+  const paymentMode = String(
+    getRecordValue(
+      order,
+      "payment_mode",
+      getRecordValue(
+        order,
+        "payment_method",
+        "prepaid",
+      ),
+    ) || "prepaid",
+  )
+    .trim()
+    .toLowerCase();
+
+  const codAmount = Number(
+    getRecordValue(
+      order,
+      "cod_amount",
+      invoiceValue,
+    ) ?? invoiceValue,
+  );
+
+  const freightMode = String(
+    PICKUP.freight_mode || "fop",
+  )
+    .trim()
+    .toLowerCase() || "fop";
+
+  const billingAddress = {
+    name: PICKUP.contact || PICKUP.name || "Delhivery",
+    company: PICKUP.name || "Delhivery",
+    consignor: PICKUP.name || "Delhivery",
+    address: PICKUP.address || "",
+    city: PICKUP.city || "",
+    state: PICKUP.state || "",
+    pin:
+      PICKUP.pin_code ||
+      pinCode(
+        getRecordValue(
+          order,
+          "shipping_pincode",
+          "",
+        ),
+      ) ||
+      "",
+    phone: PICKUP.phone || "",
+    pan_number: "",
+    gst_number: SELLER_GSTIN || "",
+  };
 
   /*
    * Internal/canonical dimensions remain:
@@ -920,7 +993,13 @@ export function buildManifestPayload(
     pickup_location_name:
       PICKUP.name,
 
-    payment_mode: "prepaid",
+    payment_mode: paymentMode,
+
+    ...(paymentMode === "cod"
+      ? {
+          cod_amount: codAmount || invoiceValue || '0',
+        }
+      : {cod_amount: '0'}),
 
     weight: weightGm,
 
@@ -999,7 +1078,7 @@ export function buildManifestPayload(
         description,
         weight: weightGm,
         waybills: [],
-        master: false,
+        master: 'False',
       },
     ],
 
@@ -1010,9 +1089,13 @@ export function buildManifestPayload(
      */
     dimensions: manifestDimensions,
 
-    rov_insurance: false,
+    rov_insurance: 'False',
 
-    fm_pickup: false,
+    freight_mode: freightMode,
+
+    billing_address: billingAddress,
+
+    fm_pickup: 'False',
   };
 }
 
