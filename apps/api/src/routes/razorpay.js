@@ -163,10 +163,12 @@ export async function verifyPayment(req, res) {
         await pb.collection('orders').update(records[0].id, { status: 'failed' });
       }
     } catch (err) {
-      logger.error('Failed to mark order failed after signature mismatch', { razorpay_order_id, err: err.message });
-    return res.status(400).json({ error: 'Payment signature verification failed',err });
-
+      logger.error('Failed to mark order failed after signature mismatch', {
+        razorpay_order_id,
+        err: err?.message || err,
+      });
     }
+
     logger.warn('Payment signature verification failed', { razorpay_order_id });
     return res.status(400).json({ error: 'Payment signature verification failed' });
   }
@@ -178,7 +180,7 @@ export async function verifyPayment(req, res) {
     payment = await rz.payments.fetch(razorpay_payment_id);
   } catch (err) {
     logger.error('Razorpay payment fetch failed', { razorpay_payment_id, err: err?.message || err });
-    return res.status(500).json({ error: 'Could not verify payment with Razorpay',err });
+    return res.status(500).json({ error: 'Could not verify payment with Razorpay' });
   }
 
   if (String(payment?.status) !== 'captured') {
@@ -197,9 +199,9 @@ export async function verifyPayment(req, res) {
     records = await pb.collection('orders').getFullList({
       filter: `razorpay_order_id = "${razorpay_order_id}"`,
     });
-  } catch (e) {
-    records = [];
-    return res.json({ error: 'razorpay_order_id',e })
+  } catch (err) {
+    logger.error('PocketBase order lookup failed', { razorpay_order_id, err: err?.message || err });
+    return res.status(500).json({ error: 'Database query failed' });
   }
 
   if (records.length === 0) {
@@ -220,6 +222,7 @@ export async function verifyPayment(req, res) {
       order_number: getRecordValue(existing, 'order_number', ''),
       payment_id: razorpay_payment_id,
       already_verified: true,
+      shipment_status: String(getRecordValue(existing, 'delhivery_request_status', 'pending') || 'pending'),
     });
   }
 
@@ -236,21 +239,35 @@ export async function verifyPayment(req, res) {
     return res.status(500).json({ error: 'PocketBase update failed', detail: String(err?.message || err) });
   }
 
-  // After a verified payment, automatically create the Delhivery B2B shipment
-  // so the order is booked with the courier (LRN/AWB stored back on the order).
-  // This is non-fatal: if Delhivery fails, the order stays paid and the error
-  // is persisted on the order for admin diagnosis.
+  // After a verified payment, automatically create the Delhivery B2B shipment.
+  // This is intentionally non-fatal: the order must remain paid even when the
+  // courier returns a job_id without an LRN yet. Delhivery will continue polling
+  // in the background and update the order record asynchronously.
+  let shipmentResult = null;
   try {
-    await createShipmentCore(pb, existing.id);
+    shipmentResult = await createShipmentCore(pb, existing.id);
   } catch (err) {
-    logger.error('Delhivery auto-shipment failed for order', existing.id, err);
-    return res.status(500).json({ error: 'Delhivery auto-shipment failed for order', detail: String(err?.message || err) });
+    logger.error('Delhivery auto-shipment failed for order', {
+      order_id: existing.id,
+      err: err?.message || err,
+    });
+    // Do not fail the payment verification flow; shipping can be retried later.
   }
+
+  const shipmentStatus = String(
+    shipmentResult?.delhivery_request_status
+      || shipmentResult?.delhivery_status
+      || getRecordValue(existing, 'delhivery_request_status', 'pending')
+      || 'pending',
+  ).trim() || 'pending';
 
   res.json({
     success: true,
     order_id: razorpay_order_id,
-    order_number: getRecordValue(orderRecord, 'order_number', ''),
+    order_number: getRecordValue(orderRecord, 'order_number', getRecordValue(existing, 'order_number', '')),
     payment_id: razorpay_payment_id,
+    shipment_status: shipmentStatus,
+    shipment_pending: ['pending_lrn', 'creating', 'pending'].includes(shipmentStatus),
+    ...(shipmentResult ? { shipment_error: shipmentResult.error, shipmentResult } : {}),
   });
 }

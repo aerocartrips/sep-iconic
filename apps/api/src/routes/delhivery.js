@@ -240,6 +240,90 @@ async function resolveLrn(result) {
   };
 }
 
+/**
+ * Start a background poll for a manifest job to wait for LRN asynchronously.
+ * This is fire-and-forget: it updates the order record when LRN appears.
+ */
+function startBackgroundLrnPoll(
+  jobId,
+  orderId,
+  pb,
+  { maxRetries = 5, initialDelay = 2000, factor = 2 } = {},
+) {
+  if (!jobId || !orderId) return;
+
+  // fire-and-forget async loop
+  (async () => {
+    let delay = Number(initialDelay) || 2000;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await sleep(delay);
+
+        const polled = await fetchManifestJob(jobId);
+        const next = extractShipmentIds(polled.data);
+
+        if (next.lrn) {
+          const fields = {
+            delhivery_lrn: next.lrn,
+            delhivery_awb: next.awb,
+            delhivery_status:
+              next.status || "manifested",
+            delhivery_request_status: "created",
+            delhivery_error: "",
+            delhivery_label: next.label,
+          };
+
+          // update order and push history
+          try {
+            const order = await findOrder(pb, orderId);
+            if (order) {
+              await pb.collection("orders").update(orderId, fields);
+              await pushHistory(pb, order, {
+                action: "create",
+                request_status: "created",
+                delhivery_job_id: jobId,
+                delhivery_lrn: next.lrn,
+              });
+            }
+          } catch (_) {}
+
+          return;
+        }
+
+        if (!isApiSuccess(polled) && polled.status >= 500) {
+          // upstream server error — stop retrying
+          break;
+        }
+      } catch (_) {
+        // ignore individual errors and continue retrying
+      }
+
+      delay = Math.round(delay * factor);
+    }
+
+    // exhausted retries — mark pending and leave a note
+    try {
+      const order = await findOrder(pb, orderId);
+      if (!order) return;
+
+      const msg = `LRN not returned after ${maxRetries} retries for job ${jobId}.`;
+
+      await pb.collection("orders").update(orderId, {
+        delhivery_request_status: "pending_lrn",
+        delhivery_error: msg,
+      });
+
+      await pushHistory(pb, order, {
+        action: "create",
+        request_status: "pending_lrn",
+        delhivery_job_id: jobId,
+        remarks: msg,
+      });
+    } catch (_) {}
+  })();
+}
+
 export function status(
   _req,
   res,
@@ -994,6 +1078,15 @@ export async function createShipmentCore(
           updateFields.delhivery_lrn,
       },
     );
+
+    // If LRN not yet returned, start a background poller to fetch it
+    if (!ids.lrn && ids.job_id) {
+      startBackgroundLrnPoll(ids.job_id, order.id, pb, {
+        maxRetries: 6,
+        initialDelay: 2000,
+        factor: 2,
+      });
+    }
 
     return {
       ok: true,
