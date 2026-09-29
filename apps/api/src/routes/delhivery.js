@@ -38,7 +38,6 @@ import {
 
 import {
   requireAdmin,
-  requireOrderAccess,
 } from "../delhivery/auth.js";
 
 import {
@@ -1740,21 +1739,6 @@ export async function trackOrder(
       .json({
         error:
           "Website order not found.",
-      });
-  }
-
-  const access =
-    await requireOrderAccess(
-      req,
-      order,
-    );
-
-  if (!access.ok) {
-    return res
-      .status(access.status)
-      .json({
-        error:
-          access.error,
       });
   }
 
